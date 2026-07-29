@@ -1,0 +1,63 @@
+# XcodeGen spec for the Gracia visionOS (Apple Vision Pro) demo.
+#
+#   xcodegen generate          # writes GraciaVisionDemo.xcodeproj next to this file
+#   open GraciaVisionDemo.xcodeproj
+#
+# Mirrors the iOS demo's spec. The app depends on the local Swift package one directory up
+# (`../Package.swift`) and links its two platform-agnostic products, `GraciaSDK` + `GraciaCamera`.
+# `GraciaView`/`mac-viewer` are macOS-only and are not referenced here — on visionOS you drive the
+# renderer yourself, the same "any platform" path the iOS demo takes, plus the one thing Vision Pro
+# adds: stereo, head-tracked rendering through Compositor Services (the SDK's `vr: true` path).
+#
+# System frameworks the renderer uses — CompositorServices, ARKit, Metal, SwiftUI — are auto-linked
+# on `import`, so they need no dependency entries here.
+#
+# Device only: fully immersive Compositor Services Metal rendering is a Vision Pro feature the
+# visionOS Simulator can't present, so `SUPPORTED_PLATFORMS: xros` (below) locks this to the device.
+name: GraciaVisionDemo
+
+options:
+  bundleIdPrefix: com.gracia
+  deploymentTarget:
+    visionOS: "26.0"
+  createIntermediateGroups: true
+  minimumXcodeGenVersion: "2.44.0"
+
+packages:
+  gracia-sdk:
+    path: ..
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    # Vision = 7. Set explicitly so the iOS-style "1,2" can't leak in; the visionOS
+    # platform preset also defaults this to 7.
+    TARGETED_DEVICE_FAMILY: "7"
+    # Signing is left to whoever opens the project; a plain compile needs neither.
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  GraciaVisionDemo:
+    type: application
+    platform: visionOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: gracia-sdk
+        product: GraciaSDK
+      - package: gracia-sdk
+        product: GraciaCamera
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gracia.visiondemo
+        GENERATE_INFOPLIST_FILE: "NO"
+        INFOPLIST_FILE: Info.plist
+        # No asset catalog; scenes are declared in code (SwiftUI lifecycle).
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        # Device-only. Fully immersive Compositor Services Metal rendering is a device feature —
+        # the visionOS Simulator can't present it — so build for the Vision Pro (xros) only. This
+        # makes Xcode refuse the Simulator destination; the compile-check uses
+        # `-destination generic/platform=visionOS`.
+        SUPPORTED_PLATFORMS: xros

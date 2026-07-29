@@ -1,0 +1,15 @@
+.DS_Store
+/.build
+/Packages
+xcuserdata/
+DerivedData/
+.swiftpm/configuration/registries.json
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+.netrc
+.swiftpm
+
+# iOS demo: the Xcode project is generated from project.yml by XcodeGen; build/ is its DerivedData.
+iOS/GraciaiOSDemo.xcodeproj/
+iOS/build/
+build
+*.xcodeproj

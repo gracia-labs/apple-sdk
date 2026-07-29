@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Bundle identity. With GENERATE_INFOPLIST_FILE = NO, Xcode does NOT inject these, so the
+	     $(...) build-setting variables (set in project.yml) are expanded in here at build time. -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleName</key>
+	<string>Gracia</string>
+	<key>CFBundleDisplayName</key>
+	<string>Gracia AVP</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+
+	<!-- SwiftUI lifecycle: scenes (the control WindowGroup and the ImmersiveSpace) are declared in
+	     code, not here. An empty scene manifest is all a SwiftUI app needs — SwiftUI vends the
+	     scenes itself. -->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+		<key>UISceneConfigurations</key>
+		<dict/>
+	</dict>
+
+	<!-- Head/device pose (WorldTrackingProvider.queryDeviceAnchor) is the one ARKit product that
+	     needs NO usage-description string and no authorization prompt, so none is declared here.
+	     Add NSWorldSensingUsageDescription only if you later pull planes / scene reconstruction. -->
+</dict>
+</plist>

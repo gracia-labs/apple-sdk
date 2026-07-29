@@ -1,0 +1,51 @@
+# XcodeGen spec for the Gracia iOS demo.
+#
+#   xcodegen generate          # writes GraciaiOSDemo.xcodeproj next to this file
+#   open GraciaiOSDemo.xcodeproj
+#
+# The app depends on the local Swift package one directory up (`../Package.swift`) and links its two
+# platform-agnostic products, `GraciaSDK` + `GraciaCamera`. `GraciaView`/`mac-viewer` are macOS-only
+# and are not referenced here — on iOS you drive the renderer yourself (see README, "any platform").
+#
+# The xcframework ships only device slices (`ios-arm64`), so this builds and runs on a physical
+# device, not the simulator.
+name: GraciaiOSDemo
+
+options:
+  bundleIdPrefix: com.gracia
+  deploymentTarget:
+    iOS: "16.4"
+  createIntermediateGroups: true
+  minimumXcodeGenVersion: "2.44.0"
+
+packages:
+  gracia-sdk:
+    path: ..
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    # Signing is left to whoever opens the project; a plain compile needs neither.
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  GraciaiOSDemo:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: gracia-sdk
+        product: GraciaSDK
+      - package: gracia-sdk
+        product: GraciaCamera
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gracia.iosdemo
+        GENERATE_INFOPLIST_FILE: "NO"
+        INFOPLIST_FILE: Info.plist
+        # No asset catalog; a plain launch screen is declared in Info.plist.
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
