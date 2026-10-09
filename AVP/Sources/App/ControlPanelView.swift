@@ -81,7 +81,7 @@ struct ControlPanelView: View {
                 Button {
                     showImporter = true
                 } label: {
-                    Label("Open .ply / .sog / .mint", systemImage: "folder")
+                    Label("Open .ply / .sog / .mint / .grv", systemImage: "folder")
                 }
 
                 Button(model.isImmersed ? "Exit Immersive Space" : "Enter Immersive Space") {

@@ -379,7 +379,7 @@ final class ARSplatsRenderer {
         _ = scene.pump()
     }
 
-    /// A `.mint`'s metadata can arrive after opening; rebuild the renderer against the real splat
+    /// A video's metadata can arrive after opening; rebuild the renderer against the real splat
     /// budget once it settles. Runs before the frame budget is taken (draining needs every permit).
     private func settleIfNeeded() {
         guard let scene, !appliedSettle, scene.isSettled else { return }

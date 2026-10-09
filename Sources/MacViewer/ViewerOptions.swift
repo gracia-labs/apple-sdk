@@ -53,7 +53,7 @@ struct ViewerOptions {
             """
             mac-viewer [scene] [options]
 
-              scene...               one or more .ply, .sog (static) or .mint (video) files
+              scene...               one or more .ply, .sog (static), .mint or .grv (video) files
 
             Options:
               --stream <url>         open an HTTP(S) MINT stream instead of a file
@@ -73,6 +73,7 @@ struct ViewerOptions {
               space           play/pause video (speed slider in the transport bar)
               0               reset framing
               m               toggle mix / split (with more than one scene)
+              b (hold)        show the split dividers
               ⌘O              open one or more files (mix)
               ⌘L              open a stream (URL + optional token)
               ⌘K              set a scene flag (key + on/off)

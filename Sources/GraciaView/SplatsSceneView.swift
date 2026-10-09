@@ -93,6 +93,10 @@ public final class SplatsSceneView: GraciaMetalView {
     private let split = SplitLayout()
     private var draggingDivider: Int?
 
+    /// While `b` is held, a line marks each `.split` divider.
+    private var showsDividers = false { didSet { layOutDividers() } }
+    private var dividerLayers: [CALayer] = []
+
     private var playingBeforeDeactivation: Bool?
     private var smoothedFPS: Double = 0
     /// The scene's world placement. Pushed onto the scenes in `encodeScenes`, folded into the world
@@ -473,6 +477,19 @@ public final class SplatsSceneView: GraciaMetalView {
         super.layout()
         input.viewHeightChanged(Float(bounds.height))
         window?.invalidateCursorRects(for: self)
+        layOutDividers()
+    }
+
+    private func layOutDividers() {
+        dividerLayers.forEach { $0.removeFromSuperlayer() }
+        let xs = showsDividers ? split.dividerPositions(width: bounds.width) : []
+        dividerLayers = xs.map { x in
+            let line = CALayer()
+            line.backgroundColor = NSColor.white.cgColor
+            line.frame = CGRect(x: x - 1, y: 0, width: 2, height: bounds.height)
+            layer?.addSublayer(line)
+            return line
+        }
     }
 
     /// A keyUp never reaches us while another app is frontmost, so release held keys or a movement
@@ -480,6 +497,7 @@ public final class SplatsSceneView: GraciaMetalView {
     public override func windowActiveChanged(_ active: Bool) {
         super.windowActiveChanged(active)
         input.releaseAllKeys()
+        showsDividers = false
         if active {
             if let was = playingBeforeDeactivation {
                 isPlaying = was
@@ -536,6 +554,7 @@ public final class SplatsSceneView: GraciaMetalView {
         if let i = draggingDivider {
             split.drag(divider: i, dx: event.deltaX, width: bounds.width)
             window?.invalidateCursorRects(for: self)
+            layOutDividers()
             requestFrame()
             return
         }
@@ -570,6 +589,7 @@ public final class SplatsSceneView: GraciaMetalView {
     // MARK: - Keyboard
 
     public override func keyDown(with event: NSEvent) {
+        if event.keyCode == KeyCode.b { return showsDividers = true }
         // Held movement keys must swallow auto-repeat; commands must not.
         if input.keyDown(keyCode: event.keyCode) {
             requestFrame()
@@ -583,6 +603,7 @@ public final class SplatsSceneView: GraciaMetalView {
     }
 
     public override func keyUp(with event: NSEvent) {
+        if event.keyCode == KeyCode.b { return showsDividers = false }
         if !input.keyUp(keyCode: event.keyCode) { super.keyUp(with: event) }
     }
 

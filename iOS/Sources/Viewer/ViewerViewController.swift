@@ -87,7 +87,7 @@ final class ViewerViewController: UIViewController {
         hud.numberOfLines = 0
         hud.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         hud.textColor = .white
-        hud.text = "Tap Open to load a .ply, .sog or .mint scene."
+        hud.text = "Tap Open to load a .ply, .sog, .mint or .grv scene."
         hud.layer.shadowColor = UIColor.black.cgColor
         hud.layer.shadowRadius = 3
         hud.layer.shadowOpacity = 0.9
@@ -148,7 +148,7 @@ final class ViewerViewController: UIViewController {
     // MARK: - Loading
 
     @objc private func openTapped() {
-        // .ply / .sog / .mint aren't system types, so accept any file and validate by extension.
+        // .ply / .sog / .mint / .grv aren't system types, so accept any file and validate by extension.
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.data, .item], asCopy: true)
         picker.delegate = self
         picker.allowsMultipleSelection = false

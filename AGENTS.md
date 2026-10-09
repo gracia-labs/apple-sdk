@@ -73,9 +73,11 @@ A crash on a `com.Metal.CompletionQueueDispatch` thread means you broke one of t
 - **The scene is small and far** → the SDK frames with `adaptiveBBox`. If the scene is wide, you framed on `boundingBox`.
 - **`GraciaContext` does not create** → a GPU frame debugger (`MTL_CAPTURE_ENABLED`) blocks it. Detach it.
 - **Nothing draws** → a static scene draws on demand; call `requestFrame()`.
-- **A `.mint` is blank at first** → it buffers; check `SceneStatus.isBuffering` or `Frame.buffering`.
-- **A stream shows `duration == 0`, an empty bbox, and never draws** → the metadata is not in yet. Call
-  `pump()`, watch `Scene.isSettled`, then frame and rebuild again. Do not gate on `duration > 0`.
+- **A `.mint` or a `.grv` is blank at first** → it buffers; check `SceneStatus.isBuffering` or
+  `Frame.buffering`.
+- **A stream or a `.grv` shows `duration == 0`, an empty bbox, and never draws** → the metadata is not
+  in yet. Call `pump()`, watch `Scene.isSettled`, then frame and rebuild again. Do not gate on
+  `duration > 0`.
 - **`ld: dylib cannot be merged`** → the xcframework is older than the mergeable build. Remove
   `-merge_framework`, or rebuild the xcframework.
 

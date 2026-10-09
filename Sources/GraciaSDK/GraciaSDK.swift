@@ -323,7 +323,7 @@ public struct SplatsPassDescriptor: Sendable {
     fileprivate var raw: GraciaRendererSplatsPass {
         GraciaRendererSplatsPass(
             colorFormat: colorFormat.raw, depth: depth.raw, sampleCount: sampleCount,
-            stereo: stereo.raw, depthStereo: depthStereo.raw)
+            stereo: stereo.raw, depthStereo: depthStereo.raw, fragmentDensityMap: false)
     }
 }
 
@@ -352,7 +352,7 @@ public struct MotionPassDescriptor: Sendable {
     fileprivate var raw: GraciaRendererMotionPass {
         GraciaRendererMotionPass(
             colorFormat: colorFormat.raw, depth: depth.raw, invertPosY: invertPositionY,
-            invertColorY: invertColorY, sampleCount: sampleCount, stereo: stereo.raw)
+            invertColorY: invertColorY, sampleCount: sampleCount, stereo: stereo.raw, fragmentDensityMap: false)
     }
 }
 
@@ -382,7 +382,7 @@ public struct MeshPassDescriptor: Sendable {
     fileprivate var raw: GraciaRendererMeshPass {
         GraciaRendererMeshPass(
             colorFormat: colorFormat.raw, depth: depth.raw, invertPosY: invertPositionY,
-            disableColorWrite: disableColorWrite, sampleCount: sampleCount, stereo: stereo.raw)
+            disableColorWrite: disableColorWrite, sampleCount: sampleCount, stereo: stereo.raw, fragmentDensityMap: false)
     }
 }
 
@@ -438,16 +438,16 @@ public final class GraciaContext {
 
 // MARK: - Scene
 
-/// A loaded scene: static splats (`.ply`, `.sog`) or volumetric video (`.mint`).
+/// A loaded scene: static splats (`.ply`, `.sog`) or volumetric video (`.mint`, `.grv`).
 ///
 /// The C API splits these across `gracia_static_splats_*` and `gracia_video_stream_*`; one type
 /// wraps both via a function table.
 public final class Scene {
-    /// The formats, named as their extensions are. `mint` is volumetric video.
+    /// The formats, named as their extensions are. `mint` and `grv` are volumetric video.
     public enum Kind: String, Sendable, CaseIterable {
-        case ply, guf, sog, mint
+        case ply, guf, sog, mint, grv
 
-        public var isVideo: Bool { self == .mint }
+        public var isVideo: Bool { self == .mint || self == .grv }
 
         fileprivate var contentType: GraciaContentType {
             switch self {
@@ -455,6 +455,8 @@ public final class Scene {
             case .guf: GRACIA_CONTENT_GUF
             case .sog: GRACIA_CONTENT_SOG
             case .mint: GRACIA_CONTENT_MINT
+            // Only static content takes a content type, and the C API names no `.grv`.
+            case .grv: GRACIA_CONTENT_UNKNOWN
             }
         }
     }
@@ -463,10 +465,11 @@ public final class Scene {
     public static let supportedExtensions = Set(Kind.allCases.map(\.rawValue))
 
     /// Whether ``init(url:context:)`` would load this URL, without context/device/GPU work. Needs an
-    /// extension; otherwise use ``init(url:kind:context:)``.
+    /// extension; otherwise use ``init(url:kind:context:)``. Only a MINT is also checked for a
+    /// version this build reads.
     public static func canLoad(_ url: URL) -> Bool {
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
-        if let kind = Kind(rawValue: url.pathExtension.lowercased()), !kind.isVideo { return true }
+        if let kind = Kind(rawValue: url.pathExtension.lowercased()), kind != .mint { return true }
         return mintVersion(url) != 0
     }
 
@@ -526,7 +529,7 @@ public final class Scene {
     /// Loads a scene whose format the caller knows — content stored under its id has no extension.
     public convenience init(url: URL, kind: Kind, context: GraciaContext) throws {
         if kind.isVideo {
-            try self.init(mintURL: url, context: context)
+            try self.init(videoURL: url, kind: kind, context: context)
         } else {
             try self.init(staticURL: url, kind: kind, context: context)
         }
@@ -552,12 +555,14 @@ public final class Scene {
             splatsBudget: count, duration: 0)
     }
 
-    private convenience init(mintURL url: URL, context: GraciaContext) throws {
+    private convenience init(videoURL url: URL, kind: Kind, context: GraciaContext) throws {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw GraciaError.loadFailed(url)
         }
-        // Named `.mint`, or actually one despite no extension.
-        guard url.pathExtension.lowercased() == Kind.mint.rawValue || Scene.mintVersion(url) != 0
+        // A `.grv` as its caller names it; a MINT named `.mint`, or actually one despite no extension.
+        guard
+            kind == .grv || url.pathExtension.lowercased() == Kind.mint.rawValue
+                || Scene.mintVersion(url) != 0
         else { throw GraciaError.unsupportedFile(url) }
 
         guard
@@ -566,10 +571,11 @@ public final class Scene {
             })
         else { throw GraciaError.loadFailed(url) }
 
-        // Authored bounds: readable before the first frame decodes, unlike the stream's own.
-        let authored = Scene.layoutBoundingBox(url)
+        // Authored bounds: readable before the first frame decodes, unlike the stream's own. A `.grv`
+        // states its bounds in its head, which lands after opening.
+        let authored = kind == .mint ? Scene.layoutBoundingBox(url) : nil
         self.init(
-            handle: handle, api: .videoStream, url: url, kind: .mint,
+            handle: handle, api: .videoStream, url: url, kind: kind,
             boundingBox: authored ?? BoundingBox(gracia_video_stream_bbox(handle)),
             adaptiveBBox: authored ?? BoundingBox(gracia_video_stream_adaptive_bbox(handle)),
             splatsBudget: UInt32(clamping: gracia_video_stream_max_splats_count(handle)),
@@ -906,8 +912,8 @@ public final class SplatsRenderer {
     public let maxSplatsCount: UInt32
 
     /// - Parameter maxSplatsCount: fixed at creation; buffers sized once, never resized, over-budget not clamped.
-    public init(context: GraciaContext, maxSplatsCount: UInt32, vr: Bool = false) throws {
-        guard let created = gracia_splats_renderer_create(context.raw, maxSplatsCount, vr) else {
+    public init(context: GraciaContext, maxSplatsCount: UInt32, vr: Bool = false, legacyPipeline: Bool = false) throws {
+        guard let created = gracia_splats_renderer_create(context.raw, maxSplatsCount, vr, legacyPipeline) else {
             throw GraciaError.rendererCreationFailed
         }
         self.raw = created
@@ -1022,38 +1028,6 @@ public final class SplatsRenderer {
         guard s.width > 0, s.height > 0 else { return nil }
         return MetalTileSettings(
             width: s.width, height: s.height, imageblockSampleLength: s.imageblockSampleLength)
-    }
-
-    /// Mesh-proxy draw calls for one camera, independent of `render(...)`.
-    public func emitMeshDrawCalls(
-        scenes: [Scene], view: RenderView, mesh: MeshPassDescriptor,
-        locomotion: simd_float4x4? = nil, commandBuffer: any MTLCommandBuffer
-    ) -> DrawCalls? {
-        guard !scenes.isEmpty else { return nil }
-
-        var objects = scenes.map { GraciaSplatsObject(ptr: $0.handle, isVideo: $0.isVideo) }
-        var projection = view.projection.columnMajor
-        var cameraToWorld = view.cameraToWorld.columnMajor
-        var locomotionFloats = locomotion?.columnMajor
-        var meshPass = mesh.raw
-
-        var cb = GraciaCommandBuffer()
-        cb.handle = Unmanaged.passUnretained(commandBuffer)
-
-        let handle = projection.withUnsafeMutableBufferPointer { p in
-            cameraToWorld.withUnsafeMutableBufferPointer { c in
-                withOptionalFloats(&locomotionFloats) { loco in
-                    objects.withUnsafeMutableBufferPointer { objs in
-                        let camera = GraciaMeshCamera(
-                            projection: p.baseAddress, viewTransform: c.baseAddress,
-                            locomotionTransform: loco)
-                        return gracia_splats_renderer_emit_mesh_draw_calls(
-                            self.raw, objs.baseAddress, UInt32(objs.count), camera, &meshPass, cb)
-                    }
-                }
-            }
-        }
-        return handle.map(DrawCalls.init(raw:))
     }
 
     /// Valid keys: `portals_enabled`, `splats_count_readback`.

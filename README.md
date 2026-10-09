@@ -22,7 +22,7 @@ The camera (drag to orbit, WASD to fly, scroll to zoom), video playback, and dra
 `GraciaSDK` and `GraciaCamera` use **no UI framework**. On iOS and visionOS, bring your own view.
 `GraciaView` is the macOS convenience layer.
 
-**Formats** `.ply`, `.sog` (static), `.mint` (video). **Requires** macOS 14 · iOS 16.4 · visionOS 26, Swift 6, Apple silicon.
+**Formats** `.ply`, `.sog` (static), `.mint`, `.grv` (video). **Requires** macOS 14 · iOS 16.4 · visionOS 26, Swift 6, Apple silicon.
 
 ## Install
 
@@ -98,10 +98,11 @@ The API cannot enforce three rules (if you break one, you get a use-after-free c
 - **Never free a scene or renderer with a frame in flight** — drain, call `context.waitUntilIdle()`, then free.
 
 **Streams settle late.** The `duration`, `splatsBudget`, and `boundingBox` of a `.mint` stream read 0
-or empty until `pump()` brings the metadata in. Drive the loop from `hasVideo`, never from
-`duration > 0`. When `isSettled` flips, rebuild the renderer and re-frame the camera. `SceneGroup`
-composites N scenes as one. `CameraInput` maps the pointer, the keys, and the scroll. The pointer y is
-**down**. Call `releaseAllKeys()` on any lost key-up. The source doc comments are the full API.
+or empty until `pump()` brings the metadata in. A `.grv` file does the same. Drive the loop from
+`hasVideo`, never from `duration > 0`. When `isSettled` flips, rebuild the renderer and re-frame the
+camera. `SceneGroup` composites N scenes as one. `CameraInput` maps the pointer, the keys, and the
+scroll. The pointer y is **down**. Call `releaseAllKeys()` on any lost key-up. The source doc comments
+are the full API.
 
 For full worked examples, see the [iOS demo](iOS/README.md) (2D viewer and AR) and the
 [visionOS demo](AVP/README.md) (immersive stereo).
@@ -109,7 +110,7 @@ For full worked examples, see the [iOS demo](iOS/README.md) (2D viewer and AR) a
 ## Controls
 
 `drag` orbit · `right-drag`/`⌥` pan · `scroll` zoom · `wasd rf qe` fly (⇧ sprint; scroll sets speed) ·
-`space` play/pause · `0` reset framing · `m` mix/split · `⌘O` open · `⌘L` stream · `⌘K` flag · drop files.
+`space` play/pause · `0` reset framing · `m` mix/split · hold `b` split dividers · `⌘O` open · `⌘L` stream · `⌘K` flag · drop files.
 The fly speed scales with the scene size. Thus it stays usable from a doll-house to a landscape.
 
 ## Test

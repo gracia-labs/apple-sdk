@@ -220,14 +220,16 @@ struct LiveSDKTests {
 @Suite("Scene")
 struct SceneTests {
     @Test func supportedExtensionsCoverStaticAndVideo() {
-        #expect(Scene.supportedExtensions == ["ply", "guf", "sog", "mint"])
+        #expect(Scene.supportedExtensions == ["ply", "guf", "sog", "mint", "grv"])
     }
 
     @Test func kindIsNamedAfterTheExtension() {
         #expect(Scene.Kind(rawValue: "sog") == .sog)
         #expect(Scene.Kind(rawValue: "mint") == .mint)
+        #expect(Scene.Kind(rawValue: "grv") == .grv)
         #expect(Scene.Kind(rawValue: "obj") == nil)
         #expect(Scene.Kind.mint.isVideo)
+        #expect(Scene.Kind.grv.isVideo)
         #expect(!Scene.Kind.sog.isVideo)
     }
 

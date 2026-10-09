@@ -194,6 +194,7 @@ final class GestureInput {
 /// Positional virtual key codes (`kVK_ANSI_*`) — physical key, layout-independent.
 public enum KeyCode {
     public static let a: UInt16 = 0
+    public static let b: UInt16 = 11
     public static let s: UInt16 = 1
     public static let d: UInt16 = 2
     public static let f: UInt16 = 3
