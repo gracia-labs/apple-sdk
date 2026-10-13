@@ -323,7 +323,7 @@ public struct SplatsPassDescriptor: Sendable {
     fileprivate var raw: GraciaRendererSplatsPass {
         GraciaRendererSplatsPass(
             colorFormat: colorFormat.raw, depth: depth.raw, sampleCount: sampleCount,
-            stereo: stereo.raw, depthStereo: depthStereo.raw)
+            stereo: stereo.raw, depthStereo: depthStereo.raw, fragmentDensityMap: false)
     }
 }
 
@@ -352,7 +352,7 @@ public struct MotionPassDescriptor: Sendable {
     fileprivate var raw: GraciaRendererMotionPass {
         GraciaRendererMotionPass(
             colorFormat: colorFormat.raw, depth: depth.raw, invertPosY: invertPositionY,
-            invertColorY: invertColorY, sampleCount: sampleCount, stereo: stereo.raw)
+            invertColorY: invertColorY, sampleCount: sampleCount, stereo: stereo.raw, fragmentDensityMap: false)
     }
 }
 
@@ -382,7 +382,7 @@ public struct MeshPassDescriptor: Sendable {
     fileprivate var raw: GraciaRendererMeshPass {
         GraciaRendererMeshPass(
             colorFormat: colorFormat.raw, depth: depth.raw, invertPosY: invertPositionY,
-            disableColorWrite: disableColorWrite, sampleCount: sampleCount, stereo: stereo.raw)
+            disableColorWrite: disableColorWrite, sampleCount: sampleCount, stereo: stereo.raw, fragmentDensityMap: false)
     }
 }
 
@@ -906,8 +906,8 @@ public final class SplatsRenderer {
     public let maxSplatsCount: UInt32
 
     /// - Parameter maxSplatsCount: fixed at creation; buffers sized once, never resized, over-budget not clamped.
-    public init(context: GraciaContext, maxSplatsCount: UInt32, vr: Bool = false) throws {
-        guard let created = gracia_splats_renderer_create(context.raw, maxSplatsCount, vr) else {
+    public init(context: GraciaContext, maxSplatsCount: UInt32, vr: Bool = false, legacyPipeline: Bool = false) throws {
+        guard let created = gracia_splats_renderer_create(context.raw, maxSplatsCount, vr, legacyPipeline) else {
             throw GraciaError.rendererCreationFailed
         }
         self.raw = created
@@ -1022,38 +1022,6 @@ public final class SplatsRenderer {
         guard s.width > 0, s.height > 0 else { return nil }
         return MetalTileSettings(
             width: s.width, height: s.height, imageblockSampleLength: s.imageblockSampleLength)
-    }
-
-    /// Mesh-proxy draw calls for one camera, independent of `render(...)`.
-    public func emitMeshDrawCalls(
-        scenes: [Scene], view: RenderView, mesh: MeshPassDescriptor,
-        locomotion: simd_float4x4? = nil, commandBuffer: any MTLCommandBuffer
-    ) -> DrawCalls? {
-        guard !scenes.isEmpty else { return nil }
-
-        var objects = scenes.map { GraciaSplatsObject(ptr: $0.handle, isVideo: $0.isVideo) }
-        var projection = view.projection.columnMajor
-        var cameraToWorld = view.cameraToWorld.columnMajor
-        var locomotionFloats = locomotion?.columnMajor
-        var meshPass = mesh.raw
-
-        var cb = GraciaCommandBuffer()
-        cb.handle = Unmanaged.passUnretained(commandBuffer)
-
-        let handle = projection.withUnsafeMutableBufferPointer { p in
-            cameraToWorld.withUnsafeMutableBufferPointer { c in
-                withOptionalFloats(&locomotionFloats) { loco in
-                    objects.withUnsafeMutableBufferPointer { objs in
-                        let camera = GraciaMeshCamera(
-                            projection: p.baseAddress, viewTransform: c.baseAddress,
-                            locomotionTransform: loco)
-                        return gracia_splats_renderer_emit_mesh_draw_calls(
-                            self.raw, objs.baseAddress, UInt32(objs.count), camera, &meshPass, cb)
-                    }
-                }
-            }
-        }
-        return handle.map(DrawCalls.init(raw:))
     }
 
     /// Valid keys: `portals_enabled`, `splats_count_readback`.
