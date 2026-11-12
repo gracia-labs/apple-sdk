@@ -3,6 +3,7 @@
 //  minimal and just vends the scene configuration declared in Info.plist.
 //
 
+import AVFoundation
 import UIKit
 
 @main
@@ -11,7 +12,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        true
+        // The SDK plays the sounds of a .grv in the audio session of the app, and sets no category.
+        try? AVAudioSession.sharedInstance().setCategory(.playback)
+        return true
     }
 
     func application(

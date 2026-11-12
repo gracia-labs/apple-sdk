@@ -50,6 +50,11 @@ public struct BoundingBox: Equatable, Sendable {
     /// Half the diagonal — the radius of the enclosing sphere.
     public var radius: Float { simd_length(size) * 0.5 }
 
+    /// The radius of the sphere about `point` that encloses the box: the distance to its farthest corner.
+    public func radius(about point: SIMD3<Float>) -> Float {
+        simd_length(simd_max(simd_abs(min - point), simd_abs(max - point)))
+    }
+
     /// A fresh video stream reports an inverted box until its first frame decodes, so check finiteness too.
     public var isValid: Bool {
         min.x <= max.x && min.y <= max.y && min.z <= max.z
@@ -63,6 +68,49 @@ public struct BoundingBox: Equatable, Sendable {
         guard other.isValid else { return self }
         return BoundingBox(min: simd_min(min, other.min), max: simd_max(max, other.max))
     }
+}
+
+/// A rigid placement: a position, and a turn.
+public struct Pose: Equatable, Sendable {
+    public var position: SIMD3<Float>
+    public var rotation: simd_quatf
+
+    public init(position: SIMD3<Float>, rotation: simd_quatf) {
+        self.position = position
+        self.rotation = rotation
+    }
+
+    fileprivate init(_ p: GraciaPose) {
+        let t = p.position, r = p.rotation
+        self.init(position: SIMD3(t.0, t.1, t.2), rotation: simd_quatf(ix: r.0, iy: r.1, iz: r.2, r: r.3))
+    }
+}
+
+/// Where content starts its viewer: the camera-to-world pose of the eye, in the scene's own space
+/// before ``Scene/setTransform(_:)``, looking down -Z with +Y up. `nil` where the content states none.
+public struct Viewpoints: Equatable, Sendable {
+    /// A flat screen, at a vertical field of view of 60°.
+    public var display: Pose?
+    /// A headset, which keeps its own height and tilt: the viewer stands on the floor of the scene
+    /// (y 0) under the pose, facing its heading.
+    public var vr: Pose?
+
+    public init(display: Pose? = nil, vr: Pose? = nil) {
+        self.display = display
+        self.vr = vr
+    }
+}
+
+/// Why a video plays nothing (`Scene.status`). Only a `.grv` gives a status other than `ok`.
+public enum VideoStatus: Equatable, Sendable {
+    /// The video plays, or its head is not in yet.
+    case ok
+    /// The file does not play.
+    case failed
+    /// The file needs a newer SDK.
+    case unsupported
+    /// The file opens only with its key.
+    case locked
 }
 
 // MARK: - Matrix conventions
@@ -323,7 +371,7 @@ public struct SplatsPassDescriptor: Sendable {
     fileprivate var raw: GraciaRendererSplatsPass {
         GraciaRendererSplatsPass(
             colorFormat: colorFormat.raw, depth: depth.raw, sampleCount: sampleCount,
-            stereo: stereo.raw, depthStereo: depthStereo.raw)
+            stereo: stereo.raw, depthStereo: depthStereo.raw, fragmentDensityMap: false)
     }
 }
 
@@ -352,7 +400,7 @@ public struct MotionPassDescriptor: Sendable {
     fileprivate var raw: GraciaRendererMotionPass {
         GraciaRendererMotionPass(
             colorFormat: colorFormat.raw, depth: depth.raw, invertPosY: invertPositionY,
-            invertColorY: invertColorY, sampleCount: sampleCount, stereo: stereo.raw)
+            invertColorY: invertColorY, sampleCount: sampleCount, stereo: stereo.raw, fragmentDensityMap: false)
     }
 }
 
@@ -382,7 +430,7 @@ public struct MeshPassDescriptor: Sendable {
     fileprivate var raw: GraciaRendererMeshPass {
         GraciaRendererMeshPass(
             colorFormat: colorFormat.raw, depth: depth.raw, invertPosY: invertPositionY,
-            disableColorWrite: disableColorWrite, sampleCount: sampleCount, stereo: stereo.raw)
+            disableColorWrite: disableColorWrite, sampleCount: sampleCount, stereo: stereo.raw, fragmentDensityMap: false)
     }
 }
 
@@ -395,7 +443,20 @@ public struct MetalTileSettings: Sendable, Equatable {
 
 // MARK: - Context
 
-/// Owns the SDK session: the GPU context and an optional on-disk cache.
+/// Where the sound of each video goes. Only a `.grv` plays its own sounds; the MP3 of a `.mint` is
+/// ``Scene/audioData``.
+public enum AudioOutput: Sendable, Equatable {
+    /// No sound.
+    case none
+    /// The default playback device. On iOS and visionOS, set the category of your `AVAudioSession`
+    /// (for example `.playback`): the SDK does not change it.
+    case device
+    /// Your audio engine reads the mix with ``GraciaContext/readAudio(into:frameCount:)``, in frames of
+    /// this format.
+    case host(sampleRate: UInt32, channels: UInt32)
+}
+
+/// Owns the SDK session: the GPU context, the mix of the sounds, and an optional on-disk cache.
 ///
 /// The SDK holds device and queue as `__unsafe_unretained`, so this class keeps them alive.
 public final class GraciaContext {
@@ -404,11 +465,19 @@ public final class GraciaContext {
     public let commandQueue: any MTLCommandQueue
 
     public init(
-        device: any MTLDevice, commandQueue: any MTLCommandQueue, cacheDirectory: URL? = nil
+        device: any MTLDevice, commandQueue: any MTLCommandQueue, cacheDirectory: URL? = nil,
+        audio: AudioOutput = .device
     ) throws {
         var desc = GraciaContextDescriptor()
         desc.device = Unmanaged.passUnretained(device)
         desc.commandQueue = Unmanaged.passUnretained(commandQueue)
+        switch audio {
+        case .none: desc.audio.output = GRACIA_AUDIO_OUTPUT_NONE
+        case .device: desc.audio.output = GRACIA_AUDIO_OUTPUT_DEVICE
+        case .host(let sampleRate, let channels):
+            desc.audio = GraciaAudioDescriptor(
+                output: GRACIA_AUDIO_OUTPUT_HOST, sampleRate: sampleRate, channels: channels)
+        }
 
         let created: UnsafeMutableRawPointer? =
             if let dir = cacheDirectory {
@@ -427,6 +496,19 @@ public final class GraciaContext {
 
     public var gpuAllocatedBytes: UInt64 { gracia_context_gpu_allocated_bytes(raw) }
 
+    /// Puts the listener of the sounds at the camera of a frame: the same `cameraToWorld` that a
+    /// ``RenderView`` holds. It hears along its -Z, with +Y up. Call it each frame.
+    public func setListener(cameraToWorld: simd_float4x4) {
+        var m = cameraToWorld
+        withUnsafeBytes(of: &m) { gracia_audio_set_listener(raw, $0.baseAddress!.assumingMemoryBound(to: Float.self)) }
+    }
+
+    /// `.host` output only: mixes the next `frameCount` frames, interleaved float32, into `frames`.
+    /// Call it on your audio thread. False, with `frames` as they were, for another output.
+    public func readAudio(into frames: UnsafeMutablePointer<Float>, frameCount: Int) -> Bool {
+        gracia_audio_read(raw, frames, UInt32(clamping: frameCount))
+    }
+
     /// Blocks until every command buffer on this queue completes. Call before destroying a renderer
     /// or scene, or in-flight completion handlers dereference freed memory.
     public func waitUntilIdle() {
@@ -438,16 +520,16 @@ public final class GraciaContext {
 
 // MARK: - Scene
 
-/// A loaded scene: static splats (`.ply`, `.sog`) or volumetric video (`.mint`).
+/// A loaded scene: static splats (`.ply`, `.sog`) or volumetric video (`.mint`, `.grv`).
 ///
 /// The C API splits these across `gracia_static_splats_*` and `gracia_video_stream_*`; one type
 /// wraps both via a function table.
 public final class Scene {
-    /// The formats, named as their extensions are. `mint` is volumetric video.
+    /// The formats, named as their extensions are. `mint` and `grv` are volumetric video.
     public enum Kind: String, Sendable, CaseIterable {
-        case ply, guf, sog, mint
+        case ply, guf, sog, mint, grv
 
-        public var isVideo: Bool { self == .mint }
+        public var isVideo: Bool { self == .mint || self == .grv }
 
         fileprivate var contentType: GraciaContentType {
             switch self {
@@ -455,6 +537,8 @@ public final class Scene {
             case .guf: GRACIA_CONTENT_GUF
             case .sog: GRACIA_CONTENT_SOG
             case .mint: GRACIA_CONTENT_MINT
+            // Only static content takes a content type, and the C API names no `.grv`.
+            case .grv: GRACIA_CONTENT_UNKNOWN
             }
         }
     }
@@ -463,10 +547,11 @@ public final class Scene {
     public static let supportedExtensions = Set(Kind.allCases.map(\.rawValue))
 
     /// Whether ``init(url:context:)`` would load this URL, without context/device/GPU work. Needs an
-    /// extension; otherwise use ``init(url:kind:context:)``.
+    /// extension; otherwise use ``init(url:kind:context:)``. Only a MINT is also checked for a
+    /// version this build reads.
     public static func canLoad(_ url: URL) -> Bool {
         guard FileManager.default.fileExists(atPath: url.path) else { return false }
-        if let kind = Kind(rawValue: url.pathExtension.lowercased()), !kind.isVideo { return true }
+        if let kind = Kind(rawValue: url.pathExtension.lowercased()), kind != .mint { return true }
         return mintVersion(url) != 0
     }
 
@@ -517,16 +602,19 @@ public final class Scene {
 
     deinit { api.destroy(handle) }
 
-    /// Loads any supported scene, format from the extension; anything else is tried as MINT.
-    public convenience init(url: URL, context: GraciaContext) throws {
+    /// Loads any supported scene, format from the extension; anything else is tried as MINT. `key` is
+    /// the key of a locked `.grv`; with none, a `.grv` takes the file beside it with `.key` after its
+    /// name, where there is one.
+    public convenience init(url: URL, context: GraciaContext, key: Data? = nil) throws {
         let kind = Kind(rawValue: url.pathExtension.lowercased())
-        try self.init(url: url, kind: kind ?? .mint, context: context)
+        try self.init(url: url, kind: kind ?? .mint, context: context, key: key)
     }
 
     /// Loads a scene whose format the caller knows — content stored under its id has no extension.
-    public convenience init(url: URL, kind: Kind, context: GraciaContext) throws {
+    /// `key` is as for `init(url:context:key:)`.
+    public convenience init(url: URL, kind: Kind, context: GraciaContext, key: Data? = nil) throws {
         if kind.isVideo {
-            try self.init(mintURL: url, context: context)
+            try self.init(videoURL: url, kind: kind, context: context, key: key)
         } else {
             try self.init(staticURL: url, kind: kind, context: context)
         }
@@ -552,26 +640,29 @@ public final class Scene {
             splatsBudget: count, duration: 0)
     }
 
-    private convenience init(mintURL url: URL, context: GraciaContext) throws {
+    private convenience init(videoURL url: URL, kind: Kind, context: GraciaContext, key: Data?) throws {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw GraciaError.loadFailed(url)
         }
-        // Named `.mint`, or actually one despite no extension.
-        guard url.pathExtension.lowercased() == Kind.mint.rawValue || Scene.mintVersion(url) != 0
+        // A `.grv` as its caller names it; a MINT named `.mint`, or actually one despite no extension.
+        guard
+            kind == .grv || url.pathExtension.lowercased() == Kind.mint.rawValue
+                || Scene.mintVersion(url) != 0
         else { throw GraciaError.unsupportedFile(url) }
 
+        let key = key ?? (kind == .grv ? try? Data(contentsOf: URL(fileURLWithPath: url.path + ".key")) : nil)
         guard
-            let handle = url.path.withCString({
-                gracia_video_stream_create(context.raw, nil, $0, false)
+            let handle = url.path.withCString({ path in
+                Scene.withKey(key) { gracia_video_stream_create(context.raw, nil, path, false, $0, $1) }
             })
         else { throw GraciaError.loadFailed(url) }
 
-        // Authored bounds: readable before the first frame decodes, unlike the stream's own.
-        let authored = Scene.layoutBoundingBox(url)
+        // Authored bounds: readable before the first frame decodes, unlike the stream's own. A `.grv`
+        // states its bounds in its head, which lands after opening.
+        let box = (kind == .mint ? Scene.layoutBoundingBox(url) : nil) ?? BoundingBox(gracia_video_stream_bbox(handle))
         self.init(
-            handle: handle, api: .videoStream, url: url, kind: .mint,
-            boundingBox: authored ?? BoundingBox(gracia_video_stream_bbox(handle)),
-            adaptiveBBox: authored ?? BoundingBox(gracia_video_stream_adaptive_bbox(handle)),
+            handle: handle, api: .videoStream, url: url, kind: kind,
+            boundingBox: box, adaptiveBBox: box,
             splatsBudget: UInt32(clamping: gracia_video_stream_max_splats_count(handle)),
             duration: gracia_video_stream_duration(handle))
     }
@@ -587,12 +678,34 @@ public final class Scene {
             }
         }
         guard let handle else { throw GraciaError.loadFailed(url) }
+        let box = BoundingBox(gracia_video_stream_bbox(handle))
         self.init(
             handle: handle, api: .videoStream, url: url, kind: .mint,
-            boundingBox: BoundingBox(gracia_video_stream_bbox(handle)),
-            adaptiveBBox: BoundingBox(gracia_video_stream_adaptive_bbox(handle)),
+            boundingBox: box, adaptiveBBox: box,
             splatsBudget: UInt32(clamping: gracia_video_stream_max_splats_count(handle)),
             duration: gracia_video_stream_duration(handle))
+    }
+
+    /// An HTTP(S) `.grv` stream, with the key of a locked one. Its head lands later: see README, "Late
+    /// metadata".
+    public convenience init(grvURL: String, context: GraciaContext, key: Data? = nil) throws {
+        let url = URL(string: grvURL) ?? URL(fileURLWithPath: grvURL)
+        let handle: UnsafeMutableRawPointer? = grvURL.withCString { cURL in
+            Scene.withKey(key) { gracia_video_stream_create_from_grv_url(context.raw, cURL, $0, $1) }
+        }
+        guard let handle else { throw GraciaError.loadFailed(url) }
+        let box = BoundingBox(gracia_video_stream_bbox(handle))
+        self.init(
+            handle: handle, api: .videoStream, url: url, kind: .grv,
+            boundingBox: box, adaptiveBBox: box,
+            splatsBudget: UInt32(clamping: gracia_video_stream_max_splats_count(handle)),
+            duration: gracia_video_stream_duration(handle))
+    }
+
+    /// The bytes of `key` and their count, or none; the SDK copies the key.
+    private static func withKey<R>(_ key: Data?, _ body: (UnsafeRawPointer?, UInt64) -> R) -> R {
+        guard let key, !key.isEmpty else { return body(nil, 0) }
+        return key.withUnsafeBytes { body($0.baseAddress, UInt64($0.count)) }
     }
 
     private static func layoutBoundingBox(_ url: URL) -> BoundingBox? {
@@ -661,7 +774,7 @@ public final class Scene {
         }
         if !boundingBox.isValid {
             boundingBox = BoundingBox(gracia_video_stream_bbox(handle))
-            adaptiveBBox = BoundingBox(gracia_video_stream_adaptive_bbox(handle))
+            adaptiveBBox = boundingBox
         }
     }
 
@@ -669,6 +782,61 @@ public final class Scene {
         guard isVideo else { return }
         gracia_video_stream_set_playback_start(handle, range.lowerBound)
         gracia_video_stream_set_playback_end(handle, range.upperBound)
+    }
+
+    /// How fast you move the time of ``setTime(_:)``: the sounds of a `.grv` play at this speed, 1 as
+    /// they are and 0 paused. Set 0 while you pause, hold the time or scrub; the default is 0, thus a
+    /// scene plays no sound until you set a speed.
+    public func setSpeed(_ speed: Double) {
+        guard isVideo else { return }
+        gracia_video_stream_set_speed(handle, speed)
+    }
+
+    /// Multiplies the gain of each sound of a `.grv`: 1 by default, 0 mutes it.
+    public func setVolume(_ volume: Float) {
+        guard isVideo else { return }
+        gracia_video_stream_set_volume(handle, volume)
+    }
+
+    // MARK: Viewpoint
+
+    /// The viewpoints a `.grv` states; none until ``isSettled``.
+    public var viewpoints: Viewpoints {
+        guard isVideo else { return Viewpoints() }
+        func pose(_ display: GraciaViewpoint) -> Pose? {
+            var pose = GraciaPose()
+            return gracia_video_stream_viewpoint(handle, display, &pose) ? Pose(pose) : nil
+        }
+        return Viewpoints(display: pose(GRACIA_VIEWPOINT_DISPLAY), vr: pose(GRACIA_VIEWPOINT_VR))
+    }
+
+    /// The point that a viewer turns about, in the scene's own space before `setTransform(_:)`, as a
+    /// viewpoint is: turn an orbit camera about it, and frame the content about it. `nil` where the
+    /// `.grv` states none, and until `isSettled`.
+    public var pivot: SIMD3<Float>? {
+        guard isVideo else { return nil }
+        var point: [Float] = [0, 0, 0]
+        return gracia_video_stream_pivot(handle, &point) ? SIMD3(point[0], point[1], point[2]) : nil
+    }
+
+    // MARK: State
+
+    /// Why the video plays nothing: read it after `pump()` returns false. A status other than `ok`
+    /// does not change: load a locked `.grv` again with its key.
+    public var status: VideoStatus {
+        guard isVideo else { return .ok }
+        switch gracia_video_stream_status(handle) {
+        case GRACIA_VIDEO_STATUS_FAILED: return .failed
+        case GRACIA_VIDEO_STATUS_UNSUPPORTED: return .unsupported
+        case GRACIA_VIDEO_STATUS_LOCKED: return .locked
+        default: return .ok
+        }
+    }
+
+    /// The splats of the frame that the last render was asked to draw; all of them for static content.
+    /// Unlike `splatsBudget` it changes with the frame of a video.
+    public var frameSplatsCount: UInt32 {
+        isVideo ? gracia_video_stream_splats_count(handle) : splatsBudget
     }
 
     // MARK: Audio
@@ -758,6 +926,16 @@ public final class SceneGroup {
     /// Not `duration > 0`: a stream is a video before it can say how long it is.
     public var hasVideo: Bool { scenes.contains(where: \.isVideo) }
 
+    /// For each display, the first viewpoint that a scene states.
+    public var viewpoints: Viewpoints {
+        let all = scenes.map(\.viewpoints)
+        return Viewpoints(
+            display: all.lazy.compactMap(\.display).first, vr: all.lazy.compactMap(\.vr).first)
+    }
+
+    /// The pivot of the first scene that states one.
+    public var pivot: SIMD3<Float>? { scenes.lazy.compactMap(\.pivot).first }
+
     public init(_ scenes: [Scene]) {
         self.scenes = scenes
     }
@@ -786,6 +964,16 @@ public final class SceneGroup {
 
     public func setPlaybackRange(_ range: ClosedRange<Double>) {
         for scene in scenes { scene.setPlaybackRange(range) }
+    }
+
+    /// See ``Scene/setSpeed(_:)``.
+    public func setSpeed(_ speed: Double) {
+        for scene in scenes { scene.setSpeed(speed) }
+    }
+
+    /// See ``Scene/setVolume(_:)``.
+    public func setVolume(_ volume: Float) {
+        for scene in scenes { scene.setVolume(volume) }
     }
 
     // MARK: Appearance (each fans out to every scene)
@@ -906,8 +1094,8 @@ public final class SplatsRenderer {
     public let maxSplatsCount: UInt32
 
     /// - Parameter maxSplatsCount: fixed at creation; buffers sized once, never resized, over-budget not clamped.
-    public init(context: GraciaContext, maxSplatsCount: UInt32, vr: Bool = false) throws {
-        guard let created = gracia_splats_renderer_create(context.raw, maxSplatsCount, vr) else {
+    public init(context: GraciaContext, maxSplatsCount: UInt32, vr: Bool = false, legacyPipeline: Bool = false) throws {
+        guard let created = gracia_splats_renderer_create(context.raw, maxSplatsCount, vr, legacyPipeline) else {
             throw GraciaError.rendererCreationFailed
         }
         self.raw = created
@@ -1022,38 +1210,6 @@ public final class SplatsRenderer {
         guard s.width > 0, s.height > 0 else { return nil }
         return MetalTileSettings(
             width: s.width, height: s.height, imageblockSampleLength: s.imageblockSampleLength)
-    }
-
-    /// Mesh-proxy draw calls for one camera, independent of `render(...)`.
-    public func emitMeshDrawCalls(
-        scenes: [Scene], view: RenderView, mesh: MeshPassDescriptor,
-        locomotion: simd_float4x4? = nil, commandBuffer: any MTLCommandBuffer
-    ) -> DrawCalls? {
-        guard !scenes.isEmpty else { return nil }
-
-        var objects = scenes.map { GraciaSplatsObject(ptr: $0.handle, isVideo: $0.isVideo) }
-        var projection = view.projection.columnMajor
-        var cameraToWorld = view.cameraToWorld.columnMajor
-        var locomotionFloats = locomotion?.columnMajor
-        var meshPass = mesh.raw
-
-        var cb = GraciaCommandBuffer()
-        cb.handle = Unmanaged.passUnretained(commandBuffer)
-
-        let handle = projection.withUnsafeMutableBufferPointer { p in
-            cameraToWorld.withUnsafeMutableBufferPointer { c in
-                withOptionalFloats(&locomotionFloats) { loco in
-                    objects.withUnsafeMutableBufferPointer { objs in
-                        let camera = GraciaMeshCamera(
-                            projection: p.baseAddress, viewTransform: c.baseAddress,
-                            locomotionTransform: loco)
-                        return gracia_splats_renderer_emit_mesh_draw_calls(
-                            self.raw, objs.baseAddress, UInt32(objs.count), camera, &meshPass, cb)
-                    }
-                }
-            }
-        }
-        return handle.map(DrawCalls.init(raw:))
     }
 
     /// Valid keys: `portals_enabled`, `splats_count_readback`.

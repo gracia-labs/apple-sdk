@@ -79,6 +79,14 @@ public func worldBounds(of bbox: BoundingBox, model: simd_float4x4) -> BoundingB
     return BoundingBox(min: lo, max: hi)
 }
 
+/// A pose of a scene's own space in the world: `model` moves the position as a point and turns the
+/// rotation, its scale left out. Public beside `worldBounds` for the same host.
+public func worldPose(of pose: Pose, model: simd_float4x4) -> Pose {
+    let axis = { (c: SIMD4<Float>) in simd_normalize(SIMD3(c.x, c.y, c.z)) }
+    let turn = simd_quatf(simd_float3x3(axis(model.columns.0), axis(model.columns.1), axis(model.columns.2)))
+    return Pose(position: model.transform(point: pose.position), rotation: (turn * pose.rotation).normalized)
+}
+
 // MARK: - Camera
 
 /// A pose plus a projection. `matrixWorld` is camera-to-world, as the SDK expects.
@@ -194,6 +202,7 @@ final class GestureInput {
 /// Positional virtual key codes (`kVK_ANSI_*`) — physical key, layout-independent.
 public enum KeyCode {
     public static let a: UInt16 = 0
+    public static let b: UInt16 = 11
     public static let s: UInt16 = 1
     public static let d: UInt16 = 2
     public static let f: UInt16 = 3
@@ -258,7 +267,7 @@ public final class SceneCamera {
     private var fullRadius = K.defaultRadius
     private var flyTrim: Float = 1
     /// What `reset()` returns to.
-    private var framing: (target: SIMD3<Float>, eye: SIMD3<Float>)?
+    private var framing: (eye: SIMD3<Float>, orient: simd_quatf)?
 
     /// True once a scene has been framed; before that there is nothing to show.
     public private(set) var isFramed = false
@@ -293,50 +302,50 @@ public final class SceneCamera {
 
     /// Frames the camera on world-space `bbox` (see `worldBounds(of:model:)`). `adaptive` is what it
     /// frames/moves/zooms at — without it stray splats shrink the scale to a speck; `bbox` still
-    /// bounds the far plane. Invalid `bbox` un-frames. `reposition: false` updates only the movement
-    /// scale, keeping a `place`d pose.
-    public func setBBox(_ bbox: BoundingBox, adaptive: BoundingBox? = nil, reposition: Bool = true) {
+    /// bounds the far plane. `pivot` is the world point that the camera frames about and turns about,
+    /// as a `.grv` states it; with none, the centre of `adaptive`. Invalid `bbox` un-frames, and the
+    /// camera still turns about `pivot`. `reposition: false` updates only the movement scale, keeping a
+    /// `place`d pose.
+    public func setBBox(
+        _ bbox: BoundingBox, adaptive: BoundingBox? = nil, pivot: SIMD3<Float>? = nil, reposition: Bool = true
+    ) {
         guard bbox.isValid else {
             isFramed = false
+            // A file of sounds alone has no box, and a viewpoint can place the camera.
+            if let pivot { sceneCentre = pivot }
             return
         }
-        frameScene(
-            full: bbox, subject: adaptive.flatMap { $0.isValid ? $0 : nil } ?? bbox,
-            reposition: reposition)
+        let subject = adaptive.flatMap { $0.isValid ? $0 : nil } ?? bbox
+        frameScene(full: bbox, subject: subject, centre: pivot ?? subject.center, reposition: reposition)
     }
 
     /// Places the camera at `eye` looking along `forward` (world-up implied, no roll). Reads nothing
     /// from the box, so a spawn can precede its scene. Leaves `isFramed` to `setBBox`; keep this pose
     /// past a settle with `reposition: false`.
     public func place(eye: SIMD3<Float>, forward: SIMD3<Float>) {
-        let target = eye + normalized(forward, fallback: Axis.forward)
-        framing = (target, eye)
-        pose(target: target, eye: eye)
+        place(eye: eye, orientation: facing(forward))
     }
 
     /// Current world pose, for copy/paste.
     public var eyePosition: SIMD3<Float> { eye }
     public var orientation: simd_quatf { orient }
 
-    /// Like `place(eye:forward:)` but with a full orientation, so roll survives.
+    /// Like `place(eye:forward:)` but with a full orientation, so roll survives, also through `reset()`.
     public func place(eye: SIMD3<Float>, orientation: simd_quatf) {
-        self.eye = eye
-        orient = orientation
-        framing = (eye + orientation.act(Axis.forward), eye)
-        input.reset()
-        apply()
+        framing = (eye, orientation.normalized)
+        pose(eye: eye, orient: orientation.normalized)
     }
 
     public func reset() {
         guard let framing else { return }
-        pose(target: framing.target, eye: framing.eye)
+        pose(eye: framing.eye, orient: framing.orient)
         isFramed = true
     }
 
-    private func frameScene(full: BoundingBox, subject: BoundingBox, reposition: Bool) {
-        sceneCentre = subject.center
-        sceneRadius =
-            subject.radius.isFinite && subject.radius > 0 ? subject.radius : K.defaultRadius
+    private func frameScene(full: BoundingBox, subject: BoundingBox, centre: SIMD3<Float>, reposition: Bool) {
+        sceneCentre = centre
+        let radius = subject.radius(about: centre)
+        sceneRadius = radius.isFinite && radius > 0 ? radius : K.defaultRadius
         fullRadius = Swift.max(full.radius, 1e-4)
         flyTrim = 1
         // Drawable now.
@@ -348,9 +357,10 @@ public final class SceneCamera {
         // Back off along +Z until the bounding sphere fits the tighter fov half-angle.
         let halfFovV = camera.fov * .pi / 360
         let halfFov = Swift.min(halfFovV, atan(tan(halfFovV) * Swift.max(camera.aspect, 1e-3)))
-        let dist = subject.radius / sin(halfFov) * 1.05
+        let dist = radius / sin(halfFov) * 1.05
 
-        framing = (subject.center, subject.center + Axis.z * Swift.max(dist, 1e-3))
+        let eye = centre + Axis.z * Swift.max(dist, 1e-3)
+        framing = (eye, facing(centre - eye))
         reset()
     }
 
@@ -401,19 +411,24 @@ public final class SceneCamera {
     /// Metres per second on the keys: seeded by the scene, then trimmed by the wheel.
     private var flySpeed: Float { sceneRadius / K.travel * flyTrim }
 
-    private func pose(target: SIMD3<Float>, eye: SIMD3<Float>) {
+    private func pose(eye: SIMD3<Float>, orient: simd_quatf) {
         self.eye = eye
-        let angles = yawPitch(of: normalized(target - eye, fallback: Axis.forward))
-        orient =
-            simd_quatf(angle: -angles.yaw, axis: Axis.y)
-            * simd_quatf(angle: angles.pitch, axis: Axis.x)
+        self.orient = orient
         input.reset()
         apply()
     }
 
+    /// Looks along `forward` with world-up and no roll.
+    private func facing(_ forward: SIMD3<Float>) -> simd_quatf {
+        let angles = yawPitch(of: normalized(forward, fallback: Axis.forward))
+        return simd_quatf(angle: -angles.yaw, axis: Axis.y)
+            * simd_quatf(angle: angles.pitch, axis: Axis.x)
+    }
+
     /// A trackball: one rotation from the camera's *own* axes, turning both camera and eye-offset. No
     /// world up, deliberately — avoids depending on the asset's export up (half are Z-up) and leaves
-    /// no pole to clamp. Turns about the scene *centre* to preserve `|eye - centre|` exactly; a
+    /// no pole to clamp. Turns about the scene *centre*, the pivot where the scene states one, to preserve
+    /// `|eye - centre|` exactly; a
     /// `reach`-based pivot would walk the camera outward every frame.
     private func turn(dx: Float, dy: Float) {
         guard dx != 0 || dy != 0 else { return }

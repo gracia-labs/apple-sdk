@@ -208,6 +208,12 @@ struct LiveSDKTests {
         #expect(throws: GraciaError.self) { try Scene(url: missing, context: context) }
     }
 
+    /// A `.grv` stream opens over HTTP(S) alone.
+    @Test func grvURLOfAnotherSchemeFailsToLoad() throws {
+        guard let context = try makeContext() else { return }
+        #expect(throws: GraciaError.self) { try Scene(grvURL: "ftp://example.com/scene.grv", context: context) }
+    }
+
     /// The GPU goes idle without a scene, a renderer, or anything submitted.
     @Test func waitUntilIdleOnAnEmptyQueueReturns() throws {
         guard let context = try makeContext() else { return }
@@ -219,15 +225,25 @@ struct LiveSDKTests {
 
 @Suite("Scene")
 struct SceneTests {
+    /// A camera frames a box about a pivot off its centre by the farthest corner from the pivot.
+    @Test func radiusAboutAPointReachesTheFarthestCorner() {
+        let box = BoundingBox(min: SIMD3(-1, -2, -3), max: SIMD3(1, 2, 3))
+        #expect(box.radius(about: box.center) ~= box.radius)
+        #expect(box.radius(about: SIMD3(1, 2, 3)) ~= simd_length(SIMD3<Float>(2, 4, 6)))
+        #expect(box.radius(about: SIMD3(0, 3, 0)) ~= simd_length(SIMD3<Float>(1, 5, 3)))
+    }
+
     @Test func supportedExtensionsCoverStaticAndVideo() {
-        #expect(Scene.supportedExtensions == ["ply", "guf", "sog", "mint"])
+        #expect(Scene.supportedExtensions == ["ply", "guf", "sog", "mint", "grv"])
     }
 
     @Test func kindIsNamedAfterTheExtension() {
         #expect(Scene.Kind(rawValue: "sog") == .sog)
         #expect(Scene.Kind(rawValue: "mint") == .mint)
+        #expect(Scene.Kind(rawValue: "grv") == .grv)
         #expect(Scene.Kind(rawValue: "obj") == nil)
         #expect(Scene.Kind.mint.isVideo)
+        #expect(Scene.Kind.grv.isVideo)
         #expect(!Scene.Kind.sog.isVideo)
     }
 

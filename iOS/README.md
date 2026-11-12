@@ -36,9 +36,9 @@ xcodebuild -project GraciaiOSDemo.xcodeproj -scheme GraciaiOSDemo \
 
 ## Load a scene
 
-There is no bundled sample. Tap **Open** and select a `.ply`, `.sog`, or `.mint` from Files. First,
-AirDrop or copy a file onto the device. To load a scene on launch instead, put a scene file in the
-resources of the app target.
+There is no bundled sample. Tap **Open** and select a `.ply`, `.sog`, `.mint`, or `.grv` from Files.
+First, AirDrop or copy a file onto the device. To load a scene on launch instead, put a scene file in
+the resources of the app target.
 
 ## Controls
 

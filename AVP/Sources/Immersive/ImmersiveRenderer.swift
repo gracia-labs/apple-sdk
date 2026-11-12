@@ -271,6 +271,8 @@ final class ImmersiveRenderer {
         // reproject at scan-out.
         drawable.deviceAnchor = anchor
         let worldFromDevice = anchor?.originFromAnchorTransform ?? matrix_identity_float4x4
+        // The listener of the sounds is the head, between the two eyes.
+        context?.setListener(cameraToWorld: worldFromDevice)
 
         // One RenderView per eye, straight from the drawable. `.rightUpBack` is exactly Gracia's
         // camera convention, so the projection needs no handedness or Y flip; the SDK inverts
@@ -411,12 +413,14 @@ final class ImmersiveRenderer {
             playhead = min(max(0, seek), end)
             isReady = false
         }
-        // Stall the clock while a frame is still decoding so playback doesn't skip ahead.
-        if inputs.isPlaying, isReady, scene.duration > 0 {
+        // Stall the clock while a frame is still decoding so playback doesn't skip ahead; the sounds stop with it.
+        let moves = inputs.isPlaying && isReady && scene.duration > 0
+        if moves {
             playhead += dt * inputs.playbackSpeed
             if playhead >= scene.duration { playhead = 0 }
         }
         scene.setTime(playhead)
+        scene.setSpeed(moves ? inputs.playbackSpeed : 0)
         isReady = scene.pump()
     }
 

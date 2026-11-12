@@ -260,6 +260,7 @@ final class ARSplatsRenderer {
                 projection: frame.camera.projectionMatrix(
                     for: orientation, viewportSize: viewportSize, zNear: 0.05, zFar: 1000),
                 cameraToWorld: frame.camera.viewMatrix(for: orientation).inverse)
+            context.setListener(cameraToWorld: view.cameraToWorld)
             frames = [
                 renderer.render(
                     scenes: [scene], view: view,
@@ -371,15 +372,17 @@ final class ARSplatsRenderer {
 
     private func advancePlayback(dt: CFTimeInterval) {
         guard let scene, scene.isVideo else { return }
-        if isPlaying, scene.duration > 0 {
+        let moves = isPlaying && scene.duration > 0
+        if moves {
             playhead += dt
             if playhead >= scene.duration { playhead = 0 }
         }
         scene.setTime(playhead)
+        scene.setSpeed(moves ? 1 : 0)
         _ = scene.pump()
     }
 
-    /// A `.mint`'s metadata can arrive after opening; rebuild the renderer against the real splat
+    /// A video's metadata can arrive after opening; rebuild the renderer against the real splat
     /// budget once it settles. Runs before the frame budget is taken (draining needs every permit).
     private func settleIfNeeded() {
         guard let scene, !appliedSettle, scene.isSettled else { return }

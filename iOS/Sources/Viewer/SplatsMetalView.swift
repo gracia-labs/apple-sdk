@@ -181,17 +181,21 @@ final class SplatsMetalView: MTKView, MTKViewDelegate, UIGestureRecognizerDelega
         onSceneLoaded?(url)
     }
 
-    /// Re-derives the world bounds from the scene box and frames the camera on them.
+    /// Re-derives the world bounds from the scene box and frames the camera on them, about the pivot that
+    /// a `.grv` states, or starts it at the display viewpoint that it states.
     private func reframe() {
         guard let scene else { return }
         let full = scene.boundingBox
         guard full.isValid else {
             // Unsettled: hand the camera the empty box so it un-frames until it settles.
-            camera.setBBox(full)
+            camera.setBBox(full, pivot: scene.pivot)
             return
         }
         let subject = scene.adaptiveBBox.isValid ? scene.adaptiveBBox : full
-        camera.setBBox(full, adaptive: subject, reposition: true)
+        camera.setBBox(full, adaptive: subject, pivot: scene.pivot, reposition: true)
+        if let start = scene.viewpoints.display {
+            camera.place(eye: start.position, orientation: start.rotation)
+        }
     }
 
     func resetFraming() {
@@ -328,6 +332,7 @@ final class SplatsMetalView: MTKView, MTKViewDelegate, UIGestureRecognizerDelega
     private func encodeScene(commandBuffer: any MTLCommandBuffer, size: CGSize) -> Frame? {
         guard let scene, let renderer, camera.isFramed else { return nil }
         let view3D = camera.renderView(aspect: aspect, viewHeightPoints: Float(bounds.height))
+        context.setListener(cameraToWorld: view3D.cameraToWorld)
         return renderer.render(
             scenes: [scene], view: view3D,
             targetWidth: UInt32(size.width), targetHeight: UInt32(size.height),
@@ -357,12 +362,14 @@ final class SplatsMetalView: MTKView, MTKViewDelegate, UIGestureRecognizerDelega
     /// Gated on `isVideo`, not duration: a stream must be pumped to learn its duration.
     private func advancePlayback(dt: CFTimeInterval) {
         guard let scene, scene.isVideo else { return }
-        // Stall the clock while buffering so playback doesn't skip ahead.
-        if isPlaying, !isBuffering, isReady, scene.duration > 0 {
+        // Stall the clock while buffering so playback doesn't skip ahead; the sounds stop with it.
+        let moves = isPlaying && !isBuffering && isReady && scene.duration > 0
+        if moves {
             playhead += dt * playbackSpeed
             if playhead >= scene.duration { playhead = 0 }
         }
         scene.setTime(playhead)
+        scene.setSpeed(moves ? playbackSpeed : 0)
         isReady = scene.pump()
     }
 

@@ -68,6 +68,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         } else if let stream = options.streamURL {
             openStream(url: stream, token: options.streamToken)
+        } else if let grv = options.grvURL {
+            do {
+                try view.load(grvURL: grv, key: options.keyURL.map { try Data(contentsOf: $0) })
+            } catch {
+                report(error)
+            }
         }
 
         if let second = options.reloadURL {
@@ -115,7 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.allowsOtherFileTypes = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
-        panel.message = "Choose one or more .ply, .sog or .mint scenes"
+        panel.message = "Choose one or more .ply, .sog, .mint or .grv scenes"
         guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
         open(panel.urls)
     }
@@ -217,7 +223,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         view.autoresizingMask = [.width, .height]
 
         hud = NSTextField(
-            labelWithString: "Drop a .ply / .sog / .mint file, press ⌘O, or ⌘L to open a stream")
+            labelWithString: "Drop a .ply / .sog / .mint / .grv file, press ⌘O, or ⌘L to open a stream")
         hud.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         hud.textColor = .white
         hud.drawsBackground = false

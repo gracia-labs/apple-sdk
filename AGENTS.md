@@ -16,7 +16,7 @@ the errors that cost the most time.
 
 `GraciaView` and `mac-viewer` are macOS-only (`#if os(macOS)`). Do not use `SplatsSceneView` on iOS.
 The Metal framework is inside the package: no install step, no `pod`, no build script. If you write
-one, something is wrong. The framework is mergeable with `-Xlinker -merge_framework -Xlinker gracia_sdk`.
+one, something is wrong. Each slice is a static library, which the link puts into your binary.
 See README, "Install".
 
 ```sh
@@ -73,11 +73,16 @@ A crash on a `com.Metal.CompletionQueueDispatch` thread means you broke one of t
 - **The scene is small and far** → the SDK frames with `adaptiveBBox`. If the scene is wide, you framed on `boundingBox`.
 - **`GraciaContext` does not create** → a GPU frame debugger (`MTL_CAPTURE_ENABLED`) blocks it. Detach it.
 - **Nothing draws** → a static scene draws on demand; call `requestFrame()`.
-- **A `.mint` is blank at first** → it buffers; check `SceneStatus.isBuffering` or `Frame.buffering`.
-- **A stream shows `duration == 0`, an empty bbox, and never draws** → the metadata is not in yet. Call
-  `pump()`, watch `Scene.isSettled`, then frame and rebuild again. Do not gate on `duration > 0`.
-- **`ld: dylib cannot be merged`** → the xcframework is older than the mergeable build. Remove
-  `-merge_framework`, or rebuild the xcframework.
+- **A `.mint` or a `.grv` is blank at first** → it buffers; check `SceneStatus.isBuffering` or
+  `Frame.buffering`.
+- **A stream or a `.grv` shows `duration == 0`, an empty bbox, and never draws** → the metadata is not
+  in yet. Call `pump()`, watch `Scene.isSettled`, then frame and rebuild again. Do not gate on
+  `duration > 0`.
+- **A `.grv` never draws, and it settles** → read `Scene.status`. `.locked` opens only with its key: a
+  file takes `<file>.key` beside it, and `key:` of the initializer gives any other. `.unsupported`
+  needs a newer SDK.
+- **A `.grv` URL does not open** → open it with `Scene(grvURL:context:key:)`. `Scene(streamURL:)` opens
+  a `.mint` alone: a URL opens through the method of its format, never by its suffix.
 
 ## Verify a change
 
@@ -105,7 +110,7 @@ context creation, so do not attach one to debug that.
 - **Frame pacing.** A static scene draws about 2 frames in each 4 s. A video runs at the display rate,
   and so does a stream that buffers. Measure with unbuffered stderr, because `kill -9` loses the
   `print()` buffer. If you leave `preferredFramesPerSecond` unset, `MTKView` holds 60.
-- **Tests.** `swift test` runs 72 tests in 10 suites. `Live SDK` is the only GPU suite. It is
+- **Tests.** `swift test` runs 74 tests in 10 suites. `Live SDK` is the only GPU suite. It is
   `.serialized`, and it does nothing when there is no Metal device.
 - **Camera.** Keys match by physical key code, never by character (the character is layout-dependent and
   can strand a held key). Fly speed is proportional to the scene radius. `moveDtCap` stops a large

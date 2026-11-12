@@ -22,14 +22,14 @@ The camera (drag to orbit, WASD to fly, scroll to zoom), video playback, and dra
 `GraciaSDK` and `GraciaCamera` use **no UI framework**. On iOS and visionOS, bring your own view.
 `GraciaView` is the macOS convenience layer.
 
-**Formats** `.ply`, `.sog` (static), `.mint` (video). **Requires** macOS 14 · iOS 16.4 · visionOS 26, Swift 6, Apple silicon.
+**Formats** `.ply`, `.sog` (static), `.mint`, `.grv` (video). **Requires** macOS 14 · iOS 16.4 · visionOS 26, Swift 6, Apple silicon.
 
 ## Install
 
 Add the package. Depend on `GraciaView` (macOS) or `GraciaSDK` and `GraciaCamera` (iOS and visionOS).
-The Metal framework ships inside, thus you link nothing else. Each slice is **mergeable**: add
-`-Xlinker -merge_framework -Xlinker gracia_sdk` to fold it into your binary (Xcode: Merge Linked
-Libraries). Omit the flag for dynamic linking. The API is the same either way.
+The Metal framework ships inside, thus you link nothing else. Each slice is a **static library** with
+its own C++ runtime: the link puts it into your binary, thus your app ships nothing beside it, and
+embeds and signs nothing of it. The library names the system frameworks that it needs.
 
 ```sh
 swift run mac-viewer a.mint b.mint --split          # side by side
@@ -48,8 +48,11 @@ Three ways to play a scene:
 | **Local file** | Download it, open it from disk | `view.load(urls: [url])` |
 | **Direct URL** | A direct link to the file streams as it is — no token, any static host | `view.load(streamURL: url)` |
 | **Gracia stream** | Streaming through Gracia infrastructure, with a token | `view.load(streamURL: url, token: t)` |
+| **`.grv` stream** | A `.grv` from any static host, with the key of a locked one | `view.load(grvURL: url, key: k)` |
 
-The same in `mac-viewer`: a path argument, `--stream <url>`, or `--stream <url> --token <t>`.
+The same in `mac-viewer`: a path argument, `--stream <url>`, `--stream <url> --token <t>`, or
+`--grv <url> --key <file>`. A locked `.grv` opens only with its key: a file takes the file beside it
+with `.key` after its name, and `key:` gives it to a stream or to a file of another name.
 A direct link works from any static host, thus it is the quickest way to try a stream. Gracia
 infrastructure is the more reliable path.
 
@@ -71,6 +74,10 @@ view.seek(to: 2.5)                             // works while paused
 view.onStatus = { s in hud.stringValue = "\(Int(s.fps)) fps · \(s.visibleSplats) splats" }
 view.snapshot(to: pngURL, afterFrames: 20) { _ in }
 ```
+
+The camera frames the scene box. Where a `.grv` states a display viewpoint, the camera starts there
+instead, under the scene transform, and the controls move it from there. `0` returns it there. Where a
+`.grv` states a pivot, the camera turns about it, and frames the box about it.
 
 ## Using the libraries directly (iOS / visionOS)
 
@@ -98,10 +105,36 @@ The API cannot enforce three rules (if you break one, you get a use-after-free c
 - **Never free a scene or renderer with a frame in flight** — drain, call `context.waitUntilIdle()`, then free.
 
 **Streams settle late.** The `duration`, `splatsBudget`, and `boundingBox` of a `.mint` stream read 0
-or empty until `pump()` brings the metadata in. Drive the loop from `hasVideo`, never from
-`duration > 0`. When `isSettled` flips, rebuild the renderer and re-frame the camera. `SceneGroup`
-composites N scenes as one. `CameraInput` maps the pointer, the keys, and the scroll. The pointer y is
-**down**. Call `releaseAllKeys()` on any lost key-up. The source doc comments are the full API.
+or empty until `pump()` brings the metadata in. A `.grv` file does the same. Drive the loop from
+`hasVideo`, never from `duration > 0`. When `isSettled` flips, rebuild the renderer and re-frame the
+camera. A settled `.grv` can state `viewpoints`, where its author starts the viewer: `display` for a
+flat screen and `vr` for a headset, each the pose of the eye in the scene's own space. Map one through
+`worldPose(of:model:)` under a scene transform. Start a flat camera at `display` with
+`place(eye:orientation:)` at 60° vertical. In a headset, stand the viewer on the floor of the scene
+(y 0) under `vr`, facing its heading, and keep the height and the tilt of the headset. A settled `.grv`
+can also state a `pivot`, the point that a viewer turns about, in the same space: give it through
+`model.transform(point:)` to `camera.setBBox(_:adaptive:pivot:)`. A `.grv` that plays nothing states
+why in `status` after `pump()` returns false: `.locked` opens only with its key, thus load it again with
+`key:`; `.unsupported` needs a newer SDK; `.failed` does not play. `frameSplatsCount` is the splats of
+the frame of the last render. `SceneGroup` composites N scenes as one. `CameraInput` maps the pointer, the keys, and the
+scroll. The pointer y is **down**. Call `releaseAllKeys()` on any lost key-up. The source doc comments
+are the full API.
+
+**Sound.** A `.grv` can hold sounds, and the SDK plays them itself. The context mixes them on the default
+playback device (`audio: .device`, the default of `GraciaContext`). On iOS and visionOS, set the
+category of your `AVAudioSession`, for example `.playback`: the SDK does not change it. Each frame:
+
+```swift
+scene.setTime(playhead)
+scene.setSpeed(moves ? playbackSpeed : 0)          // 0 while you pause, hold the time or scrub
+context.setListener(cameraToWorld: view.cameraToWorld)   // in a headset, the head between the eyes
+```
+
+A scene plays no sound until you set a speed. A sound with an emitter comes from its place in the scene,
+under the transform of the scene, and the others play at the listener, as music. `setVolume` scales the
+gain of each sound of a scene. To mix the sounds into an audio engine of your own, create the context with
+`audio: .host(sampleRate:channels:)` and call `readAudio(into:frameCount:)` on your audio thread. The MP3
+of a `.mint` is not played: read it from `audioData`.
 
 For full worked examples, see the [iOS demo](iOS/README.md) (2D viewer and AR) and the
 [visionOS demo](AVP/README.md) (immersive stereo).
@@ -109,7 +142,7 @@ For full worked examples, see the [iOS demo](iOS/README.md) (2D viewer and AR) a
 ## Controls
 
 `drag` orbit · `right-drag`/`⌥` pan · `scroll` zoom · `wasd rf qe` fly (⇧ sprint; scroll sets speed) ·
-`space` play/pause · `0` reset framing · `m` mix/split · `⌘O` open · `⌘L` stream · `⌘K` flag · drop files.
+`space` play/pause · `0` reset framing · `m` mix/split · hold `b` split dividers · `⌘O` open · `⌘L` stream · `⌘K` flag · drop files.
 The fly speed scales with the scene size. Thus it stays usable from a doll-house to a landscape.
 
 ## Test

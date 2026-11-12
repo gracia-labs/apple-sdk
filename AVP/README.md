@@ -5,8 +5,9 @@ scene, or you float it in your room, and you look around with your head. It is t
 to the iOS demo. On iOS you drive one camera from touch. Here the two eyes come straight from the
 headset, and the built-in VR path of the SDK does the stereo.
 
-- **Control window** — select a `.ply`, `.sog`, or `.mint`; enter or exit the immersive space; place
-  and scale the scene; and play or scrub volumetric video. A small HUD shows splats, FPS, and GPU use.
+- **Control window** — select a `.ply`, `.sog`, `.mint`, or `.grv`; enter or exit the immersive space;
+  place and scale the scene; and play or scrub volumetric video. A small HUD shows splats, FPS, and
+  GPU use.
 - **Immersive space** — a [Compositor Services](https://developer.apple.com/documentation/compositorservices)
   render loop draws the scene into the display, one eye for each texture-array slice.
   [ARKit](https://developer.apple.com/documentation/arkit/worldtrackingprovider) tracks the head.
@@ -42,9 +43,9 @@ xcodebuild -project GraciaVisionDemo.xcodeproj -scheme GraciaVisionDemo \
 
 ## Load a scene
 
-There is no bundled sample. In the window, tap **Open** and select a `.ply`, `.sog`, or `.mint` from
-Files. First, AirDrop or copy a file onto the device. The app copies the file into its container, thus
-the render thread can read it. Then tap **Enter Immersive Space**.
+There is no bundled sample. In the window, tap **Open** and select a `.ply`, `.sog`, `.mint`, or `.grv`
+from Files. First, AirDrop or copy a file onto the device. The app copies the file into its container,
+thus the render thread can read it. Then tap **Enter Immersive Space**.
 
 ## Controls
 
@@ -62,7 +63,7 @@ The control window holds the rest. It stays visible inside the space:
 | **Enter / Exit Immersive Space** | open or close the stereo player |
 | **Immersion** | Mixed (the scene floats in your room over passthrough) or Full (passthrough is replaced, and you are inside the scene) |
 | **Recenter in front of me** | drop the scene again, sized and placed in front of your view |
-| **Play / scrub** | volumetric video (`.mint`) only |
+| **Play / scrub** | volumetric video (`.mint`, `.grv`) only |
 
 ## How it fits together
 

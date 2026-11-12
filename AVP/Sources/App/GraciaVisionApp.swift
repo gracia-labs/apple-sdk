@@ -7,12 +7,18 @@
 //  window only through `model.link`.
 //
 
+import AVFoundation
 import CompositorServices
 import SwiftUI
 
 @main
 struct GraciaVisionApp: App {
     static let immersiveSpaceID = "player"
+
+    init() {
+        // The SDK plays the sounds of a .grv in the audio session of the app, and sets no category.
+        try? AVAudioSession.sharedInstance().setCategory(.playback)
+    }
 
     @State private var model = AppModel()
     // Immersion style lives here as @State: changing it re-runs this body and re-applies the style to

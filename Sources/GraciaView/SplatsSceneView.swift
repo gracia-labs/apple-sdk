@@ -93,6 +93,10 @@ public final class SplatsSceneView: GraciaMetalView {
     private let split = SplitLayout()
     private var draggingDivider: Int?
 
+    /// While `b` is held, a line marks each `.split` divider.
+    private var showsDividers = false { didSet { layOutDividers() } }
+    private var dividerLayers: [CALayer] = []
+
     private var playingBeforeDeactivation: Bool?
     private var smoothedFPS: Double = 0
     /// The scene's world placement. Pushed onto the scenes in `encodeScenes`, folded into the world
@@ -165,6 +169,11 @@ public final class SplatsSceneView: GraciaMetalView {
         try load(scenes: [Scene(streamURL: streamURL, context: context, token: token)])
     }
 
+    /// An HTTP(S) `.grv` stream, with the key of a locked one.
+    public func load(grvURL: String, key: Data? = nil) throws {
+        try load(scenes: [Scene(grvURL: grvURL, context: context, key: key)])
+    }
+
     /// Shows scenes the caller built. Build them against this view's ``context``; scenes from
     /// another one render nothing.
     public func load(scenes: [Scene], layout: SceneLayout = .mix) throws {
@@ -217,22 +226,28 @@ public final class SplatsSceneView: GraciaMetalView {
         camera.place(eye: eye, forward: forward)
     }
 
-    /// Re-derives world-space bounds from the scene box and `model` and frames the camera on them —
-    /// unless the host has `place`d it, when only movement scale updates. Call after the box settles
-    /// or the transform changes.
+    /// Re-derives world-space bounds from the scene box and `model` and frames the camera on them, or
+    /// starts it at the display viewpoint that a scene states — unless the host has `place`d it, when
+    /// only movement scale updates. Call after the box settles or the transform changes.
     public func reframe() {
         guard let group else { return }
         let full = group.boundingBox
+        let pivot = group.pivot.map { model.transform(point: $0) }
         guard full.isValid else {
             // Unsettled: hand the camera the empty box so it un-frames until it settles.
-            camera.setBBox(full)
+            camera.setBBox(full, pivot: pivot)
             return
         }
         let subject = group.adaptiveBBox.isValid ? group.adaptiveBBox : full
         camera.setBBox(
             worldBounds(of: full, model: model),
             adaptive: worldBounds(of: subject, model: model),
+            pivot: pivot,
             reposition: autoFrames)
+        if autoFrames, let viewpoint = group.viewpoints.display {
+            let start = worldPose(of: viewpoint, model: model)
+            camera.place(eye: start.position, orientation: start.rotation)
+        }
     }
 
     /// Only meaningful with more than one scene.
@@ -345,6 +360,7 @@ public final class SplatsSceneView: GraciaMetalView {
         }
 
         let view3D = camera.renderView(aspect: aspect, viewHeightPoints: Float(bounds.height))
+        context.setListener(cameraToWorld: view3D.cameraToWorld)
         let w = UInt32(size.width)
         let h = UInt32(size.height)
 
@@ -405,12 +421,14 @@ public final class SplatsSceneView: GraciaMetalView {
     private func advancePlayback(dt: CFTimeInterval) {
         guard let group, group.hasVideo else { return }
 
-        // Stall the clock while buffering so playback doesn't skip ahead.
-        if isPlaying, !isBuffering, isReady, group.duration > 0 {
+        // Stall the clock while buffering so playback doesn't skip ahead; the sounds stop with it.
+        let moves = isPlaying && !isBuffering && isReady && group.duration > 0
+        if moves {
             playhead += dt * playbackSpeed
             if playhead >= group.duration { playhead = 0 }
         }
         group.setTime(playhead)
+        group.setSpeed(moves ? playbackSpeed : 0)
         isReady = group.pump()
     }
 
@@ -473,6 +491,19 @@ public final class SplatsSceneView: GraciaMetalView {
         super.layout()
         input.viewHeightChanged(Float(bounds.height))
         window?.invalidateCursorRects(for: self)
+        layOutDividers()
+    }
+
+    private func layOutDividers() {
+        dividerLayers.forEach { $0.removeFromSuperlayer() }
+        let xs = showsDividers ? split.dividerPositions(width: bounds.width) : []
+        dividerLayers = xs.map { x in
+            let line = CALayer()
+            line.backgroundColor = NSColor.white.cgColor
+            line.frame = CGRect(x: x - 1, y: 0, width: 2, height: bounds.height)
+            layer?.addSublayer(line)
+            return line
+        }
     }
 
     /// A keyUp never reaches us while another app is frontmost, so release held keys or a movement
@@ -480,6 +511,7 @@ public final class SplatsSceneView: GraciaMetalView {
     public override func windowActiveChanged(_ active: Bool) {
         super.windowActiveChanged(active)
         input.releaseAllKeys()
+        showsDividers = false
         if active {
             if let was = playingBeforeDeactivation {
                 isPlaying = was
@@ -536,6 +568,7 @@ public final class SplatsSceneView: GraciaMetalView {
         if let i = draggingDivider {
             split.drag(divider: i, dx: event.deltaX, width: bounds.width)
             window?.invalidateCursorRects(for: self)
+            layOutDividers()
             requestFrame()
             return
         }
@@ -570,6 +603,7 @@ public final class SplatsSceneView: GraciaMetalView {
     // MARK: - Keyboard
 
     public override func keyDown(with event: NSEvent) {
+        if event.keyCode == KeyCode.b { return showsDividers = true }
         // Held movement keys must swallow auto-repeat; commands must not.
         if input.keyDown(keyCode: event.keyCode) {
             requestFrame()
@@ -583,6 +617,7 @@ public final class SplatsSceneView: GraciaMetalView {
     }
 
     public override func keyUp(with event: NSEvent) {
+        if event.keyCode == KeyCode.b { return showsDividers = false }
         if !input.keyUp(keyCode: event.keyCode) { super.keyUp(with: event) }
     }
 

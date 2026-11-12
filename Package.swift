@@ -38,13 +38,7 @@ let package = Package(
         .target(name: "GraciaView", dependencies: ["GraciaSDK", "GraciaCamera"]),
 
         // The demo viewer: a window, a menu, a HUD and a CLI around `SplatsSceneView`.
-        // `-merge_framework` supersedes the `-framework` flag SwiftPM adds for the binary target, so
-        // the mergeable `gracia_sdk` slice lands inside this executable instead of loading at launch.
-        .executableTarget(
-            name: "MacViewer",
-            dependencies: ["GraciaView"],
-            linkerSettings: [.unsafeFlags(["-Xlinker", "-merge_framework", "-Xlinker", "gracia_sdk"])]
-        ),
+        .executableTarget(name: "MacViewer", dependencies: ["GraciaView"]),
 
         .testTarget(name: "GraciaSDKTests", dependencies: ["GraciaSDK"]),
         .testTarget(name: "GraciaCameraTests", dependencies: ["GraciaCamera", "GraciaSDK"]),

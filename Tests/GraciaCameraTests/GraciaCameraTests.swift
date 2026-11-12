@@ -97,6 +97,54 @@ struct SceneFramingTests {
         #expect(close(scene.camera.position, framed, 1e-3))
     }
 
+    /// A display viewpoint can roll; `reset` must bring the roll back, not only the direction.
+    @Test func resetRestoresAPlacedRoll() {
+        let scene = SceneCamera()
+        scene.setBBox(BoundingBox(min: SIMD3(-1, -1, -1), max: SIMD3(1, 1, 1)))
+        let eye = SIMD3<Float>(0.5, 1, 4)
+        let turn = simd_quatf(angle: 0.4, axis: simd_normalize(SIMD3(0.2, 1, 0.3)))
+        scene.place(eye: eye, orientation: turn)
+
+        scene.input.addRotation(dx: 200, dy: 90)
+        for _ in 0..<200 { scene.update(dt: 1.0 / 60) }
+        scene.reset()
+
+        #expect(close(scene.eyePosition, eye, 1e-4))
+        #expect(close(scene.orientation.act(Axis.y), turn.act(Axis.y), 1e-4))
+        #expect(close(scene.orientation.act(Axis.forward), turn.act(Axis.forward), 1e-4))
+    }
+
+    /// A viewpoint states the scene's own space; the scene transform moves it and turns it, and its
+    /// scale moves the eye but leaves the turn alone.
+    @Test func worldPoseFollowsTheSceneTransform() {
+        let pose = Pose(position: SIMD3(1, 2, 3), rotation: simd_quatf(angle: 0.3, axis: Axis.x))
+        let rotation = simd_quatf(angle: .pi / 2, axis: Axis.y)
+        let model = simd_float4x4(translation: SIMD3(10, 0, 0), rotation: rotation, scale: SIMD3(repeating: 2))
+
+        let world = worldPose(of: pose, model: model)
+
+        #expect(close(world.position, model.transform(point: pose.position)))
+        #expect(close(world.rotation.act(Axis.forward), (rotation * pose.rotation).act(Axis.forward)))
+        #expect(close(world.rotation.act(Axis.y), (rotation * pose.rotation).act(Axis.y)))
+    }
+
+    /// A `.grv` can state a pivot off the centre of its box: the camera frames the box about the pivot,
+    /// and a turn keeps the eye at its distance from the pivot.
+    @Test func turnsAboutThePivot() {
+        let scene = SceneCamera()
+        let pivot = SIMD3<Float>(0.5, -0.25, 0.75)
+        scene.setBBox(BoundingBox(min: SIMD3(-1, -1, -1), max: SIMD3(1, 1, 1)), pivot: pivot)
+        let framed = scene.eyePosition
+        #expect(close(SIMD3(framed.x, framed.y, 0), SIMD3(pivot.x, pivot.y, 0)))
+        #expect(close(scene.orientation.act(Axis.forward), Axis.forward))
+
+        let distance = simd_length(framed - pivot)
+        scene.input.addRotation(dx: 200, dy: 90)
+        for _ in 0..<200 { scene.update(dt: 1.0 / 60) }
+        #expect(!close(scene.eyePosition, framed, 1e-2))
+        #expect(abs(simd_length(scene.eyePosition - pivot) - distance) < 1e-3 * distance)
+    }
+
     /// A video stream reports an inverted box until its first frame decodes.
     @Test func invalidBoundingBoxDoesNotFrame() {
         let scene = SceneCamera()
