@@ -15,7 +15,7 @@ struct ViewerOptions {
     var streamURL: String?
     var streamToken: String?
     var grvURL: String?
-    var keyURL: URL?
+    var headURL: URL?
 
     /// Parses CLI arguments; see ``printUsage()``.
     init(arguments: [String]) {
@@ -34,8 +34,8 @@ struct ViewerOptions {
                 if let t = it.next() { streamToken = t }
             case "--grv":
                 if let u = it.next() { grvURL = u }
-            case "--key":
-                if let p = it.next() { keyURL = URL(fileURLWithPath: (p as NSString).expandingTildeInPath) }
+            case "--head":
+                if let p = it.next() { headURL = URL(fileURLWithPath: (p as NSString).expandingTildeInPath) }
             case "--split":
                 layout = .split
             case "--zoom":
@@ -65,7 +65,7 @@ struct ViewerOptions {
               --stream <url>         open an HTTP(S) MINT stream instead of a file
               --token <token>        bearer token for --stream (optional)
               --grv <url>            open an HTTP(S) .grv stream instead of a file
-              --key <path>           key of a locked .grv for --grv; a .grv file takes <file>.key
+              --head <path>          head of a .grv that holds a head hash, for --grv; a .grv file takes <file>.head
               --screenshot <path>    render, write a PNG, and exit
               --frames <n>           frames to render before the screenshot (default 20)
               --reload <path>        load a second scene after 0.5s (exercises scene swapping)

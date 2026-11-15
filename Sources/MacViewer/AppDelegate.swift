@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             openStream(url: stream, token: options.streamToken)
         } else if let grv = options.grvURL {
             do {
-                try view.load(grvURL: grv, key: options.keyURL.map { try Data(contentsOf: $0) })
+                try view.load(grvURL: grv, head: options.headURL.map { try Data(contentsOf: $0) })
             } catch {
                 report(error)
             }

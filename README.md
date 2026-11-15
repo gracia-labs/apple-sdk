@@ -48,11 +48,11 @@ Three ways to play a scene:
 | **Local file** | Download it, open it from disk | `view.load(urls: [url])` |
 | **Direct URL** | A direct link to the file streams as it is — no token, any static host | `view.load(streamURL: url)` |
 | **Gracia stream** | Streaming through Gracia infrastructure, with a token | `view.load(streamURL: url, token: t)` |
-| **`.grv` stream** | A `.grv` from any static host, with the key of a locked one | `view.load(grvURL: url, key: k)` |
+| **`.grv` stream** | A `.grv` from any static host, with the head of one that holds a head hash | `view.load(grvURL: url, head: h)` |
 
 The same in `mac-viewer`: a path argument, `--stream <url>`, `--stream <url> --token <t>`, or
-`--grv <url> --key <file>`. A locked `.grv` opens only with its key: a file takes the file beside it
-with `.key` after its name, and `key:` gives it to a stream or to a file of another name.
+`--grv <url> --head <file>`. A `.grv` that holds a head hash opens only with its head: a file takes the
+file beside it with `.head` after its name, and `head:` gives it to a stream or to a file of another name.
 A direct link works from any static host, thus it is the quickest way to try a stream. Gracia
 infrastructure is the more reliable path.
 
@@ -114,8 +114,8 @@ flat screen and `vr` for a headset, each the pose of the eye in the scene's own 
 (y 0) under `vr`, facing its heading, and keep the height and the tilt of the headset. A settled `.grv`
 can also state a `pivot`, the point that a viewer turns about, in the same space: give it through
 `model.transform(point:)` to `camera.setBBox(_:adaptive:pivot:)`. A `.grv` that plays nothing states
-why in `status` after `pump()` returns false: `.locked` opens only with its key, thus load it again with
-`key:`; `.unsupported` needs a newer SDK; `.failed` does not play. `frameSplatsCount` is the splats of
+why in `status` after `pump()` returns false: `.headHash` opens only with its head, thus load it again
+with `head:`; `.unsupported` needs a newer SDK; `.failed` does not play. `frameSplatsCount` is the splats of
 the frame of the last render. `SceneGroup` composites N scenes as one. `CameraInput` maps the pointer, the keys, and the
 scroll. The pointer y is **down**. Call `releaseAllKeys()` on any lost key-up. The source doc comments
 are the full API.

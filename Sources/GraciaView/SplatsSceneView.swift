@@ -169,9 +169,9 @@ public final class SplatsSceneView: GraciaMetalView {
         try load(scenes: [Scene(streamURL: streamURL, context: context, token: token)])
     }
 
-    /// An HTTP(S) `.grv` stream, with the key of a locked one.
-    public func load(grvURL: String, key: Data? = nil) throws {
-        try load(scenes: [Scene(grvURL: grvURL, context: context, key: key)])
+    /// An HTTP(S) `.grv` stream, with the head of one that holds a head hash.
+    public func load(grvURL: String, head: Data? = nil) throws {
+        try load(scenes: [Scene(grvURL: grvURL, context: context, head: head)])
     }
 
     /// Shows scenes the caller built. Build them against this view's ``context``; scenes from

@@ -109,8 +109,8 @@ public enum VideoStatus: Equatable, Sendable {
     case failed
     /// The file needs a newer SDK.
     case unsupported
-    /// The file opens only with its key.
-    case locked
+    /// The file holds a head hash, and opens only with its head.
+    case headHash
 }
 
 // MARK: - Matrix conventions
@@ -602,19 +602,19 @@ public final class Scene {
 
     deinit { api.destroy(handle) }
 
-    /// Loads any supported scene, format from the extension; anything else is tried as MINT. `key` is
-    /// the key of a locked `.grv`; with none, a `.grv` takes the file beside it with `.key` after its
-    /// name, where there is one.
-    public convenience init(url: URL, context: GraciaContext, key: Data? = nil) throws {
+    /// Loads any supported scene, format from the extension; anything else is tried as MINT. `head` is
+    /// the head of a `.grv` that holds a head hash; with none, a `.grv` takes the file beside it with
+    /// `.head` after its name, where there is one.
+    public convenience init(url: URL, context: GraciaContext, head: Data? = nil) throws {
         let kind = Kind(rawValue: url.pathExtension.lowercased())
-        try self.init(url: url, kind: kind ?? .mint, context: context, key: key)
+        try self.init(url: url, kind: kind ?? .mint, context: context, head: head)
     }
 
     /// Loads a scene whose format the caller knows — content stored under its id has no extension.
-    /// `key` is as for `init(url:context:key:)`.
-    public convenience init(url: URL, kind: Kind, context: GraciaContext, key: Data? = nil) throws {
+    /// `head` is as for `init(url:context:head:)`.
+    public convenience init(url: URL, kind: Kind, context: GraciaContext, head: Data? = nil) throws {
         if kind.isVideo {
-            try self.init(videoURL: url, kind: kind, context: context, key: key)
+            try self.init(videoURL: url, kind: kind, context: context, head: head)
         } else {
             try self.init(staticURL: url, kind: kind, context: context)
         }
@@ -640,7 +640,7 @@ public final class Scene {
             splatsBudget: count, duration: 0)
     }
 
-    private convenience init(videoURL url: URL, kind: Kind, context: GraciaContext, key: Data?) throws {
+    private convenience init(videoURL url: URL, kind: Kind, context: GraciaContext, head: Data?) throws {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw GraciaError.loadFailed(url)
         }
@@ -650,10 +650,10 @@ public final class Scene {
                 || Scene.mintVersion(url) != 0
         else { throw GraciaError.unsupportedFile(url) }
 
-        let key = key ?? (kind == .grv ? try? Data(contentsOf: URL(fileURLWithPath: url.path + ".key")) : nil)
+        let head = head ?? (kind == .grv ? try? Data(contentsOf: URL(fileURLWithPath: url.path + ".head")) : nil)
         guard
             let handle = url.path.withCString({ path in
-                Scene.withKey(key) { gracia_video_stream_create(context.raw, nil, path, false, $0, $1) }
+                Scene.withHead(head) { gracia_video_stream_create(context.raw, nil, path, false, $0, $1) }
             })
         else { throw GraciaError.loadFailed(url) }
 
@@ -686,12 +686,12 @@ public final class Scene {
             duration: gracia_video_stream_duration(handle))
     }
 
-    /// An HTTP(S) `.grv` stream, with the key of a locked one. Its head lands later: see README, "Late
-    /// metadata".
-    public convenience init(grvURL: String, context: GraciaContext, key: Data? = nil) throws {
+    /// An HTTP(S) `.grv` stream, with the head of one that holds a head hash. Its head lands later: see
+    /// README, "Late metadata".
+    public convenience init(grvURL: String, context: GraciaContext, head: Data? = nil) throws {
         let url = URL(string: grvURL) ?? URL(fileURLWithPath: grvURL)
         let handle: UnsafeMutableRawPointer? = grvURL.withCString { cURL in
-            Scene.withKey(key) { gracia_video_stream_create_from_grv_url(context.raw, cURL, $0, $1) }
+            Scene.withHead(head) { gracia_video_stream_create_from_grv_url(context.raw, cURL, $0, $1) }
         }
         guard let handle else { throw GraciaError.loadFailed(url) }
         let box = BoundingBox(gracia_video_stream_bbox(handle))
@@ -702,10 +702,10 @@ public final class Scene {
             duration: gracia_video_stream_duration(handle))
     }
 
-    /// The bytes of `key` and their count, or none; the SDK copies the key.
-    private static func withKey<R>(_ key: Data?, _ body: (UnsafeRawPointer?, UInt64) -> R) -> R {
-        guard let key, !key.isEmpty else { return body(nil, 0) }
-        return key.withUnsafeBytes { body($0.baseAddress, UInt64($0.count)) }
+    /// The bytes of `head` and their count, or none; the SDK copies the head.
+    private static func withHead<R>(_ head: Data?, _ body: (UnsafeRawPointer?, UInt64) -> R) -> R {
+        guard let head, !head.isEmpty else { return body(nil, 0) }
+        return head.withUnsafeBytes { body($0.baseAddress, UInt64($0.count)) }
     }
 
     private static func layoutBoundingBox(_ url: URL) -> BoundingBox? {
@@ -822,13 +822,13 @@ public final class Scene {
     // MARK: State
 
     /// Why the video plays nothing: read it after `pump()` returns false. A status other than `ok`
-    /// does not change: load a locked `.grv` again with its key.
+    /// does not change: load a `.grv` that holds a head hash again with its head.
     public var status: VideoStatus {
         guard isVideo else { return .ok }
         switch gracia_video_stream_status(handle) {
         case GRACIA_VIDEO_STATUS_FAILED: return .failed
         case GRACIA_VIDEO_STATUS_UNSUPPORTED: return .unsupported
-        case GRACIA_VIDEO_STATUS_LOCKED: return .locked
+        case GRACIA_VIDEO_STATUS_HEAD_HASH: return .headHash
         default: return .ok
         }
     }

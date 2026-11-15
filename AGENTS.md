@@ -78,10 +78,10 @@ A crash on a `com.Metal.CompletionQueueDispatch` thread means you broke one of t
 - **A stream or a `.grv` shows `duration == 0`, an empty bbox, and never draws** → the metadata is not
   in yet. Call `pump()`, watch `Scene.isSettled`, then frame and rebuild again. Do not gate on
   `duration > 0`.
-- **A `.grv` never draws, and it settles** → read `Scene.status`. `.locked` opens only with its key: a
-  file takes `<file>.key` beside it, and `key:` of the initializer gives any other. `.unsupported`
+- **A `.grv` never draws, and it settles** → read `Scene.status`. `.headHash` opens only with its head: a
+  file takes `<file>.head` beside it, and `head:` of the initializer gives any other. `.unsupported`
   needs a newer SDK.
-- **A `.grv` URL does not open** → open it with `Scene(grvURL:context:key:)`. `Scene(streamURL:)` opens
+- **A `.grv` URL does not open** → open it with `Scene(grvURL:context:head:)`. `Scene(streamURL:)` opens
   a `.mint` alone: a URL opens through the method of its format, never by its suffix.
 
 ## Verify a change
