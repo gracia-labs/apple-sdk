@@ -91,8 +91,9 @@ public struct Pose: Equatable, Sendable {
 public struct Viewpoints: Equatable, Sendable {
     /// A flat screen, at a vertical field of view of 60°.
     public var display: Pose?
-    /// A headset, which keeps its own height and tilt: the viewer stands on the floor of the scene
-    /// (y 0) under the pose, facing its heading.
+    /// A headset: move the scene so that the pose is where the headset is at its first frame, the
+    /// eye at the place of the pose, upright, facing its heading. The headset keeps its tilt, and the
+    /// origin of a session can lie anywhere in the room.
     public var vr: Pose?
 
     public init(display: Pose? = nil, vr: Pose? = nil) {
@@ -1212,12 +1213,12 @@ public final class SplatsRenderer {
             width: s.width, height: s.height, imageblockSampleLength: s.imageblockSampleLength)
     }
 
-    /// Valid keys: `portals_enabled`, `splats_count_readback`.
+    /// Valid keys: `splats_count_readback`.
     public func setFlag(_ key: String, _ value: Bool) {
         key.withCString { gracia_splats_renderer_set_flag(raw, $0, value) }
     }
 
-    /// Valid keys: `opacity_threshold`, `head_bounds_half`.
+    /// Valid keys: `opacity_threshold`.
     public func setFloat(_ key: String, _ value: Float) {
         key.withCString { gracia_splats_renderer_set_float(raw, $0, value) }
     }
