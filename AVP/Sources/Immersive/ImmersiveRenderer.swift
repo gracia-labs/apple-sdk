@@ -333,7 +333,7 @@ final class ImmersiveRenderer {
         // Multiview emits ONE vertex-amplified draw for both eyes. The SDK's shader amplifies each
         // vertex to two views (ampId 0/1), indexes the per-eye matrices by ampId, and relies on the
         // view mapping to route each view to its slice. The SDK does NOT set the encoder-side
-        // amplification (its render backend does — see deps/fuji/.../metal/RenderPass.cpp), so we must:
+        // amplification (its render backend does), so we must:
         // two viewports (amp 1 uses viewport index 1) and mappings sending amp 1 to slice 1. Without
         // this, ampId stays 0 and only the left slice is drawn — the right eye is empty.
         if let calls = held?.color.mono {

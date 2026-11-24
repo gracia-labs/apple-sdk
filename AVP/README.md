@@ -115,7 +115,7 @@ encoder.setVertexAmplificationCount(2, viewMappings: [
 ])
 ```
 
-This matches the Metal backend of the SDK (`deps/fuji/.../metal/RenderPass.cpp`). Depth comes from the
+This matches the Metal backend of the SDK. Depth comes from the
 same color pass (`.splats(reverseZ: true)`, stored to `depthTextures[0]`), thus the compositor can
 reproject. The path is reverse-Z throughout, and it matches `computeProjection` and the `depthRange` of
 the drawable.
