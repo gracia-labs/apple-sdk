@@ -481,7 +481,7 @@ public enum AudioOutput: Sendable, Equatable {
 ///
 /// The SDK holds device and queue as `__unsafe_unretained`, so this class keeps them alive.
 public final class GraciaContext {
-    fileprivate let raw: UnsafeMutableRawPointer
+    fileprivate let raw: OpaquePointer
     public let device: any MTLDevice
     public let commandQueue: any MTLCommandQueue
 
@@ -500,7 +500,7 @@ public final class GraciaContext {
                 output: GRACIA_AUDIO_OUTPUT_HOST, sampleRate: sampleRate, channels: channels)
         }
 
-        let created: UnsafeMutableRawPointer? =
+        let created: OpaquePointer? =
             if let dir = cacheDirectory {
                 dir.path.withCString { gracia_context_create(&desc, $0) }
             } else {
@@ -581,7 +581,7 @@ public final class Scene {
         url.path.withCString { gracia_video_mint_version_from_file($0) }
     }
 
-    fileprivate let handle: UnsafeMutableRawPointer
+    fileprivate let handle: OpaquePointer
     private let api: API
 
     public let url: URL
@@ -607,7 +607,7 @@ public final class Scene {
     public var name: String { url.lastPathComponent }
 
     private init(
-        handle: UnsafeMutableRawPointer, api: API, url: URL, kind: Kind,
+        handle: OpaquePointer, api: API, url: URL, kind: Kind,
         boundingBox: BoundingBox, adaptiveBBox: BoundingBox,
         splatsBudget: UInt32, duration: Double
     ) {
@@ -691,7 +691,7 @@ public final class Scene {
     /// An HTTP(S) MINT stream. Give the context a `cacheDirectory` for on-disk chunk caching.
     public convenience init(streamURL: String, context: GraciaContext, token: String? = nil) throws {
         let url = URL(string: streamURL) ?? URL(fileURLWithPath: streamURL)
-        let handle: UnsafeMutableRawPointer? = streamURL.withCString { cURL in
+        let handle: OpaquePointer? = streamURL.withCString { cURL in
             if let token {
                 token.withCString { gracia_video_stream_create_from_url(context.raw, cURL, $0) }
             } else {
@@ -711,7 +711,7 @@ public final class Scene {
     /// README, "Late metadata".
     public convenience init(grvURL: String, context: GraciaContext, head: Data? = nil) throws {
         let url = URL(string: grvURL) ?? URL(fileURLWithPath: grvURL)
-        let handle: UnsafeMutableRawPointer? = grvURL.withCString { cURL in
+        let handle: OpaquePointer? = grvURL.withCString { cURL in
             Scene.withHead(head) { gracia_video_stream_create_from_grv_url(context.raw, cURL, $0, $1) }
         }
         guard let handle else { throw GraciaError.loadFailed(url) }
@@ -742,8 +742,8 @@ public final class Scene {
 
     /// Model matrix placing this scene in the world.
     public func setTransform(_ m: simd_float4x4) {
-        var cols = m.columnMajor
-        cols.withUnsafeMutableBufferPointer { api.setTransform(handle, $0.baseAddress) }
+        let cols = m.columnMajor
+        cols.withUnsafeBufferPointer { api.setTransform(handle, $0.baseAddress) }
     }
 
     /// 4 x vec4 of irradiance-scaled environment SH, or `nil` to disable.
@@ -903,15 +903,15 @@ public final class Scene {
 /// Static and video handles expose the same setters under different C symbols; captured once so they
 /// can't diverge. All fields are C function pointers, safe to share.
 private struct API: @unchecked Sendable {
-    let destroy: (UnsafeMutableRawPointer?) -> Void
-    let setTransform: (UnsafeMutableRawPointer?, UnsafeMutablePointer<Float>?) -> Void
-    let setEnvSH: (UnsafeMutableRawPointer?, UnsafePointer<Float>?) -> Void
-    let setColorGrade: (UnsafeMutableRawPointer?, Float, Float, Float, Float) -> Void
-    let setFlag: (UnsafeMutableRawPointer?, UnsafePointer<CChar>?, Bool) -> Void
-    let setVisibility: (UnsafeMutableRawPointer?, Float) -> Void
+    let destroy: (OpaquePointer?) -> Void
+    let setTransform: (OpaquePointer?, UnsafePointer<Float>?) -> Void
+    let setEnvSH: (OpaquePointer?, UnsafePointer<Float>?) -> Void
+    let setColorGrade: (OpaquePointer?, Float, Float, Float, Float) -> Void
+    let setFlag: (OpaquePointer?, UnsafePointer<CChar>?, Bool) -> Void
+    let setVisibility: (OpaquePointer?, Float) -> Void
     let setBboxMask:
-        (UnsafeMutableRawPointer?, Float, Float, Float, Float, Float, Float, Float) -> Void
-    let clearBboxMask: (UnsafeMutableRawPointer?) -> Void
+        (OpaquePointer?, Float, Float, Float, Float, Float, Float, Float) -> Void
+    let clearBboxMask: (OpaquePointer?) -> Void
 
     static let staticSplats = API(
         destroy: gracia_static_splats_destroy,
@@ -1069,9 +1069,9 @@ extension BoundingBox {
 /// `render` hands back a heap handle per pass and view; every non-null one must be destroyed even if
 /// never executed, or it leaks.
 public final class DrawCalls {
-    private let raw: UnsafeMutableRawPointer
+    private let raw: OpaquePointer
 
-    fileprivate init(raw: UnsafeMutableRawPointer) { self.raw = raw }
+    fileprivate init(raw: OpaquePointer) { self.raw = raw }
 
     deinit { gracia_draw_call_destroy(raw) }
 
@@ -1138,7 +1138,7 @@ public struct RenderView: Sendable {
 // MARK: - Renderer
 
 public final class SplatsRenderer {
-    private let raw: UnsafeMutableRawPointer
+    private let raw: OpaquePointer
     private let context: GraciaContext
     public let maxSplatsCount: UInt32
 
@@ -1183,33 +1183,31 @@ public final class SplatsRenderer {
         precondition(views.count <= 2, "at most two views (left/right eye)")
         let second = views.count > 1 ? views[1] : first
 
-        var objects = scenes.map { GraciaSplatsObject(ptr: $0.handle, isVideo: $0.isVideo) }
+        let objects = scenes.map { GraciaSplatsObject(ptr: UnsafeMutableRawPointer($0.handle), isVideo: $0.isVideo) }
         var splatsPass = pass.raw
         var motionPass = motion?.raw
         var meshPass = mesh?.raw
-        var locomotionFloats = locomotion?.columnMajor
+        let locomotionFloats = locomotion?.columnMajor
 
-        // Both C view slots are always filled, so mono never reads garbage from views[1]. Separate
-        // locals: nesting `withUnsafeMutableBufferPointer` over one array's elements violates exclusivity.
-        var proj0 = first.projection.columnMajor
-        var proj1 = second.projection.columnMajor
-        var cam0 = first.cameraToWorld.columnMajor
-        var cam1 = second.cameraToWorld.columnMajor
+        let proj0 = first.projection.columnMajor
+        let proj1 = second.projection.columnMajor
+        let cam0 = first.cameraToWorld.columnMajor
+        let cam1 = second.cameraToWorld.columnMajor
 
         var cb = GraciaCommandBuffer()
         cb.handle = Unmanaged.passUnretained(commandBuffer)
 
-        let raw = proj0.withUnsafeMutableBufferPointer { p0 in
-            proj1.withUnsafeMutableBufferPointer { p1 in
-                cam0.withUnsafeMutableBufferPointer { c0 in
-                    cam1.withUnsafeMutableBufferPointer { c1 in
-                        var projPtrs = [p0.baseAddress, p1.baseAddress]
-                        var viewPtrs = [c0.baseAddress, c1.baseAddress]
-                        return projPtrs.withUnsafeMutableBufferPointer { pp in
-                            viewPtrs.withUnsafeMutableBufferPointer { vv in
-                                objects.withUnsafeMutableBufferPointer { objs in
+        let raw = proj0.withUnsafeBufferPointer { p0 in
+            proj1.withUnsafeBufferPointer { p1 in
+                cam0.withUnsafeBufferPointer { c0 in
+                    cam1.withUnsafeBufferPointer { c1 in
+                        let projPtrs = [p0.baseAddress, p1.baseAddress]
+                        let viewPtrs = [c0.baseAddress, c1.baseAddress]
+                        return projPtrs.withUnsafeBufferPointer { pp in
+                            viewPtrs.withUnsafeBufferPointer { vv in
+                                objects.withUnsafeBufferPointer { objs in
                                     // NULL locomotion is read as identity.
-                                    withOptionalFloats(&locomotionFloats) { loco in
+                                    withOptionalFloats(locomotionFloats) { loco in
                                         withOptionalPointer(&motionPass) { mo in
                                             withOptionalPointer(&meshPass) { me in
                                                 gracia_splats_renderer_render(
@@ -1293,8 +1291,8 @@ private func withOptionalPointer<T, R>(_ value: inout T?, _ body: (UnsafePointer
 }
 
 private func withOptionalFloats<R>(
-    _ value: inout [Float]?, _ body: (UnsafeMutablePointer<Float>?) -> R
+    _ value: [Float]?, _ body: (UnsafePointer<Float>?) -> R
 ) -> R {
-    guard value != nil else { return body(nil) }
-    return value!.withUnsafeMutableBufferPointer { body($0.baseAddress) }
+    guard let value else { return body(nil) }
+    return value.withUnsafeBufferPointer { body($0.baseAddress) }
 }
