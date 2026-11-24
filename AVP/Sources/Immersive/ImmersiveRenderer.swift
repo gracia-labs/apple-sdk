@@ -245,12 +245,17 @@ final class ImmersiveRenderer {
         if inputs.recenter { needsPlacement = true; link.consumeRecenter() }
 
         if needsPlacement, let scene = scenes.first {
-            let box = scene.adaptiveBBox.isValid ? scene.adaptiveBBox : scene.boundingBox
-            // Wait for a real box — a video settles its bounds a few frames in.
-            if box.isValid {
-                let head = deviceAnchor?.isTracked == true ? deviceAnchor?.originFromAnchorTransform : nil
-                gestureController.resetToMatrix(GesturePlacement.initial(box: box, head: head))
+            let head = deviceAnchor?.isTracked == true ? deviceAnchor?.originFromAnchorTransform : nil
+            if let viewpoint = scene.viewpoints.vr {
+                gestureController.resetToMatrix(GesturePlacement.atViewpoint(viewpoint, head: head))
                 needsPlacement = false
+            } else {
+                let box = scene.adaptiveBBox.isValid ? scene.adaptiveBBox : scene.boundingBox
+                // Wait for a real box — a video settles its bounds a few frames in.
+                if box.isValid {
+                    gestureController.resetToMatrix(GesturePlacement.initial(box: box, head: head))
+                    needsPlacement = false
+                }
             }
         }
 
@@ -404,6 +409,7 @@ final class ImmersiveRenderer {
             return
         }
         if scene.duration > 0 { scene.setPlaybackRange(0...scene.duration) }
+        needsPlacement = true
     }
 
     private func advancePlayback(inputs: RenderLink.Inputs, dt: Double) {

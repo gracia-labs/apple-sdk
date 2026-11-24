@@ -32,7 +32,7 @@ let package = Package(
         .target(name: "GraciaSDK", dependencies: ["gracia_sdk"]),
 
         // Camera and input: orbit (drag), fly (WASD), zoom (scroll).
-        .target(name: "GraciaCamera", dependencies: ["GraciaSDK"]),
+        .target(name: "GraciaCamera", dependencies: ["GraciaSDK", "gracia_sdk"]),
 
         // The macOS view layer.
         .target(name: "GraciaView", dependencies: ["GraciaSDK", "GraciaCamera"]),

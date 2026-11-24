@@ -86,6 +86,26 @@ public struct Pose: Equatable, Sendable {
     }
 }
 
+/// Model matrix placing content at full size so its VR viewpoint aligns with `head` (upright, matching heading).
+public func vrPlacement(viewpoint: Pose, head: simd_float4x4?) -> simd_float4x4 {
+    let r = viewpoint.rotation.vector
+    let p = GraciaPose(
+        position: (viewpoint.position.x, viewpoint.position.y, viewpoint.position.z),
+        rotation: (r.x, r.y, r.z, r.w))
+    var out = [Float](repeating: 0, count: 16)
+    if let head {
+        let cols = head.columnMajor
+        cols.withUnsafeBufferPointer { gracia_vr_placement(p, $0.baseAddress, &out) }
+    } else {
+        gracia_vr_placement(p, nil, &out)
+    }
+    return simd_float4x4(
+        SIMD4(out[0], out[1], out[2], out[3]),
+        SIMD4(out[4], out[5], out[6], out[7]),
+        SIMD4(out[8], out[9], out[10], out[11]),
+        SIMD4(out[12], out[13], out[14], out[15]))
+}
+
 /// Where content starts its viewer: the camera-to-world pose of the eye, in the scene's own space
 /// before ``Scene/setTransform(_:)``, looking down -Z with +Y up. `nil` where the content states none.
 public struct Viewpoints: Equatable, Sendable {
@@ -820,6 +840,28 @@ public final class Scene {
         return gracia_video_stream_pivot(handle, &point) ? SIMD3(point[0], point[1], point[2]) : nil
     }
 
+    /// Bounds of the portal window of a `.grv` in its own space before `setTransform(_:)`, or `nil`
+    /// where the `.grv` states no portal or until `isSettled`.
+    public var portalBBox: BoundingBox? {
+        guard isVideo else { return nil }
+        var raw = GraciaBBox()
+        guard gracia_video_stream_portal_bbox(handle, &raw) else { return nil }
+        let box = BoundingBox(raw)
+        return box.isValid ? box : nil
+    }
+
+    /// Move of the portal subspace from the last rendered frame, or `nil` where the `.grv` states no portal.
+    public var portalFollow: simd_float4x4? {
+        guard isVideo else { return nil }
+        var cols = [Float](repeating: 0, count: 16)
+        guard gracia_video_stream_portal_follow(handle, &cols) else { return nil }
+        return simd_float4x4(
+            SIMD4(cols[0], cols[1], cols[2], cols[3]),
+            SIMD4(cols[4], cols[5], cols[6], cols[7]),
+            SIMD4(cols[8], cols[9], cols[10], cols[11]),
+            SIMD4(cols[12], cols[13], cols[14], cols[15]))
+    }
+
     // MARK: State
 
     /// Why the video plays nothing: read it after `pump()` returns false. A status other than `ok`
@@ -936,6 +978,12 @@ public final class SceneGroup {
 
     /// The pivot of the first scene that states one.
     public var pivot: SIMD3<Float>? { scenes.lazy.compactMap(\.pivot).first }
+
+    /// Bounds of the portal window when this group holds one scene with a portal.
+    public var portalBBox: BoundingBox? { scenes.count == 1 ? scenes[0].portalBBox : nil }
+
+    /// Move of the portal subspace from the last rendered frame when this group holds one scene with a portal.
+    public var portalFollow: simd_float4x4? { scenes.count == 1 ? scenes[0].portalFollow : nil }
 
     public init(_ scenes: [Scene]) {
         self.scenes = scenes

@@ -233,20 +233,21 @@ public final class SplatsSceneView: GraciaMetalView {
         guard let group else { return }
         let full = group.boundingBox
         let pivot = group.pivot.map { model.transform(point: $0) }
-        guard full.isValid else {
+        if full.isValid {
+            let subject = group.portalBBox ?? (group.adaptiveBBox.isValid ? group.adaptiveBBox : full)
+            camera.setBBox(
+                worldBounds(of: full, model: model),
+                adaptive: worldBounds(of: subject, model: model),
+                pivot: pivot,
+                reposition: autoFrames)
+        } else {
             // Unsettled: hand the camera the empty box so it un-frames until it settles.
             camera.setBBox(full, pivot: pivot)
-            return
         }
-        let subject = group.adaptiveBBox.isValid ? group.adaptiveBBox : full
-        camera.setBBox(
-            worldBounds(of: full, model: model),
-            adaptive: worldBounds(of: subject, model: model),
-            pivot: pivot,
-            reposition: autoFrames)
         if autoFrames, let viewpoint = group.viewpoints.display {
             let start = worldPose(of: viewpoint, model: model)
             camera.place(eye: start.position, orientation: start.rotation)
+            camera.reset()
         }
     }
 
@@ -373,7 +374,9 @@ public final class SplatsSceneView: GraciaMetalView {
         switch sceneLayout {
         case .mix:
             guard let renderer = renderers.first else { return [] }
-            return [render(renderer, group.scenes)]
+            let frame = render(renderer, group.scenes)
+            if let follow = group.portalFollow { camera.follow(follow) }
+            return [frame]
         case .split:
             guard renderers.count == group.scenes.count else { return [] }
             return zip(renderers, group.scenes).map { render($0, [$1]) }

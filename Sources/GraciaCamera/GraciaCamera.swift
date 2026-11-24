@@ -1,44 +1,16 @@
 //
-//  One camera: eye + orientation. Public API is `SceneCamera` and `CameraInput`.
+//  Swift wrapper over `gracia_camera_*` in the C SDK, plus platform-independent pointer/key input.
 //
 
 import GraciaSDK
+import gracia_sdk
 import simd
 
-// MARK: - Tuning
-
 enum K {
-    /// Radians of rotation per full view-height drag.
-    static let rotate: Float = 2.5
-    static let pan: Float = 1.6
-    /// Trackpad deltas arrive pre-accelerated and keep coming through momentum after lift.
+    /// Trackpad two-finger scroll pan scale; deltas arrive pre-accelerated.
     static let scrollPan: Float = 0.3
-    static let wheelZoom: Float = 0.0015
-
-    /// Seconds to cross one scene radius; seeds a constant fly speed (decaying speed never arrives).
-    /// The wheel trims it.
+    /// Seconds to cross one scene radius (kept in sync with `src/shared/camera/SceneCamera.cpp`).
     static let travel: Float = 4.5
-    static let flyTrim: (min: Float, max: Float) = (1.0 / 64, 64)
-    static let boost: Float = 4
-    /// Radians/sec on Q/E. No world up, so roll is how you level the horizon yourself — or tilt it.
-    static let roll: Float = 1.4
-
-    /// Two floors under `reach` (scene fractions): the orbit arc wants tight up close, the dolly step
-    /// wants to stay big or zoom stalls just as it arrives.
-    static let reachFloor: Float = 0.02
-    static let dollyFloor: Float = 0.15
-    /// Ceiling on `reach` — bounds how fast a gesture *grows*, not where the camera goes: the dolly
-    /// step is a fraction of reach, so zooming out compounds and runs away.
-    static let reachCeiling: Float = 1000
-    static let nearFraction: Float = 0.002
-
-    /// Cap on per-step `dt`. Slower frames still move *proportionally*; the cap only stops the first
-    /// frame after an idle (dt up to 0.25s) from lurching.
-    static let moveDtCap: Float = 1.0 / 20
-    /// Inertia time constant, seconds.
-    static let tau: Float = 0.022
-    static let idle: Float = 1e-4
-    static let defaultRadius: Float = 12
 }
 
 enum Axis {
@@ -50,17 +22,6 @@ enum Axis {
 
 @inlinable
 func clamp(_ v: Float, _ lo: Float, _ hi: Float) -> Float { Swift.min(hi, Swift.max(lo, v)) }
-
-/// World units per pixel at `distance` — the pan gain.
-@inlinable
-func perspectiveScale(distance: Float, fovYDegrees: Float, pixels: Float) -> Float {
-    2 * distance * tan(fovYDegrees * .pi / 360) / Swift.max(1, pixels)
-}
-
-@inlinable
-func yawPitch(of forward: SIMD3<Float>) -> (yaw: Float, pitch: Float) {
-    (atan2(forward.x, -forward.z), asin(clamp(forward.y, -1, 1)))
-}
 
 /// World-space AABB of a transformed box — all 8 corners, since a rotated centre isn't the bounds
 /// centre. Public so the host (owning the model matrix) can supply world bounds.
@@ -85,116 +46,6 @@ public func worldPose(of pose: Pose, model: simd_float4x4) -> Pose {
     let axis = { (c: SIMD4<Float>) in simd_normalize(SIMD3(c.x, c.y, c.z)) }
     let turn = simd_quatf(simd_float3x3(axis(model.columns.0), axis(model.columns.1), axis(model.columns.2)))
     return Pose(position: model.transform(point: pose.position), rotation: (turn * pose.rotation).normalized)
-}
-
-// MARK: - Camera
-
-/// A pose plus a projection. `matrixWorld` is camera-to-world, as the SDK expects.
-final class Camera {
-    var position = SIMD3<Float>.zero
-    var target = SIMD3<Float>.zero
-    var up = Axis.y
-
-    private(set) var matrixWorld = matrix_identity_float4x4
-    private(set) var projectionMatrix = matrix_identity_float4x4
-
-    var fov: Float = 60 { didSet { updateProjection() } }
-    var aspect: Float = 1 { didSet { updateProjection() } }
-    var near: Float = 0.05 { didSet { updateProjection() } }
-    var far: Float = 10000 { didSet { updateProjection() } }
-    var reverseZ = true { didSet { updateProjection() } }
-
-    init() {
-        updateProjection()
-        matrixWorld = GraciaMatrix.cameraWorld(eye: position, target: target, up: up)
-    }
-
-    private func updateProjection() {
-        projectionMatrix = GraciaMatrix.perspective(
-            fovYDegrees: fov, aspect: aspect, near: near, far: far, reverseZ: reverseZ)
-    }
-
-    /// From a raw orthonormal basis (no `lookAt` cross products), so the camera can roll. `back`
-    /// faces away from view.
-    func setAxes(right: SIMD3<Float>, up: SIMD3<Float>, back: SIMD3<Float>) {
-        self.up = up
-        self.target = position - back
-        matrixWorld = GraciaMatrix.cameraWorld(eye: position, right: right, up: up, back: back)
-    }
-
-    var renderView: RenderView {
-        RenderView(projection: projectionMatrix, cameraToWorld: matrixWorld)
-    }
-}
-
-// MARK: - Gestures
-
-/// One frame's worth: rotation in radians, pan in points, zoom in log space.
-struct GestureDelta {
-    var rotX: Float = 0
-    var rotY: Float = 0
-    var panX: Float = 0
-    var panY: Float = 0
-    var zoom: Float = 0
-
-    var isSettled: Bool { abs(rotX) + abs(rotY) + abs(panX) + abs(panY) + abs(zoom) < K.idle }
-
-    static func += (l: inout GestureDelta, r: GestureDelta) {
-        l.rotX += r.rotX; l.rotY += r.rotY; l.panX += r.panX; l.panY += r.panY; l.zoom += r.zoom
-    }
-    static func -= (l: inout GestureDelta, r: GestureDelta) {
-        l.rotX -= r.rotX; l.rotY -= r.rotY; l.panX -= r.panX; l.panY -= r.panY; l.zoom -= r.zoom
-    }
-    static func * (l: GestureDelta, s: Float) -> GestureDelta {
-        GestureDelta(
-            rotX: l.rotX * s, rotY: l.rotY * s, panX: l.panX * s, panY: l.panY * s, zoom: l.zoom * s)
-    }
-}
-
-/// Accumulates raw input, draining it on the render clock: frame-rate independent, with a short
-/// tail after release.
-final class GestureInput {
-    /// View height in points; normalises rotation so drags feel size-independent.
-    var height: Float = 1
-
-    private var accumulated = GestureDelta()
-    private var pending = GestureDelta()
-
-    func addRotation(dx: Float, dy: Float) {
-        let h = Swift.max(height, 1)
-        accumulated.rotX += (dx / h) * K.rotate
-        accumulated.rotY += (dy / h) * K.rotate
-    }
-
-    func addPan(dx: Float, dy: Float) {
-        accumulated.panX += dx
-        accumulated.panY += dy
-    }
-
-    /// Log space, so it composes additively.
-    func addZoom(_ z: Float) { accumulated.zoom += z }
-
-    func addScroll(deltaY: Float, precise: Bool) {
-        addZoom(deltaY * (precise ? 1 : 100) * K.wheelZoom)
-    }
-
-    /// `m` is the relative delta (scale factor − 1).
-    func addMagnification(_ m: Float) {
-        guard m > -1 else { return }
-        addZoom(log1p(m))
-    }
-
-    func reset() { pending = GestureDelta() }
-
-    /// Critically damped: each frame takes `1 − exp(−dt/tau)` of what is outstanding.
-    func drain(dt: Float) -> GestureDelta? {
-        pending += accumulated
-        accumulated = GestureDelta()
-        guard !pending.isSettled else { return nil }
-        let out = pending * (1 - exp(-dt / K.tau))
-        pending -= out
-        return out
-    }
 }
 
 // MARK: - Keys
@@ -232,6 +83,20 @@ enum MoveKey: Hashable {
         default: return nil
         }
     }
+
+    var bit: UInt32 {
+        switch self {
+        case .w: UInt32(GRACIA_CAMERA_KEY_W.rawValue)
+        case .a: UInt32(GRACIA_CAMERA_KEY_A.rawValue)
+        case .s: UInt32(GRACIA_CAMERA_KEY_S.rawValue)
+        case .d: UInt32(GRACIA_CAMERA_KEY_D.rawValue)
+        case .r: UInt32(GRACIA_CAMERA_KEY_R.rawValue)
+        case .f: UInt32(GRACIA_CAMERA_KEY_F.rawValue)
+        case .q: UInt32(GRACIA_CAMERA_KEY_Q.rawValue)
+        case .e: UInt32(GRACIA_CAMERA_KEY_E.rawValue)
+        case .shift: UInt32(GRACIA_CAMERA_KEY_SHIFT.rawValue)
+        }
+    }
 }
 
 // MARK: - Scene camera
@@ -254,241 +119,146 @@ public struct SceneTransform: Sendable {
 }
 
 public final class SceneCamera {
-    let camera = Camera()
-    let input = GestureInput()
+    private let raw: UnsafeMutableRawPointer
 
-    private var eye = SIMD3<Float>.zero
-    private var orient = simd_quatf(angle: 0, axis: Axis.y)
-    private var keys: Set<MoveKey> = []
+    public init() {
+        // Metal clip space: +Y up (`flipY: false`), reverse-Z by default.
+        raw = gracia_camera_create(true, false)!
+    }
 
-    private var sceneCentre = SIMD3<Float>.zero
-    private var sceneRadius = K.defaultRadius
-    /// Radius of the true box — what the far plane must clear, strays and all.
-    private var fullRadius = K.defaultRadius
-    private var flyTrim: Float = 1
-    /// What `reset()` returns to.
-    private var framing: (eye: SIMD3<Float>, orient: simd_quatf)?
-
-    /// True once a scene has been framed; before that there is nothing to show.
-    public private(set) var isFramed = false
-
-    public init() { apply() }
+    deinit { gracia_camera_destroy(raw) }
 
     // MARK: Projection
 
     /// Must match the depth compare op of the pass being rendered.
     public var reverseZ: Bool {
-        get { camera.reverseZ }
-        set { camera.reverseZ = newValue }
+        get { gracia_camera_reverse_z(raw) }
+        set { gracia_camera_set_reverse_z(raw, newValue) }
     }
 
     public var fieldOfView: Float {
-        get { camera.fov }
-        set { camera.fov = newValue }
+        get { gracia_camera_fov(raw) }
+        set { gracia_camera_set_fov(raw, newValue) }
     }
 
     public var aspect: Float {
-        get { camera.aspect }
-        set { camera.aspect = newValue }
+        get { gracia_camera_aspect(raw) }
+        set { gracia_camera_set_aspect(raw, newValue) }
+    }
+
+    /// True once a scene has been framed; before that there is nothing to show.
+    public var isFramed: Bool { gracia_camera_is_framed(raw) }
+
+    /// Current world pose, for copy/paste.
+    public var eyePosition: SIMD3<Float> {
+        let p = gracia_camera_pose(raw).position
+        return SIMD3(p.0, p.1, p.2)
+    }
+
+    public var orientation: simd_quatf {
+        let r = gracia_camera_pose(raw).rotation
+        return simd_quatf(ix: r.0, iy: r.1, iz: r.2, r: r.3)
+    }
+
+    var nearPlane: Float {
+        var n: Float = 0
+        gracia_camera_near_far(raw, &n, nil)
+        return n
     }
 
     public func renderView(aspect: Float, viewHeightPoints: Float) -> RenderView {
-        if aspect > 0, aspect.isFinite { camera.aspect = aspect }
-        input.height = viewHeightPoints
-        return camera.renderView
+        let v = gracia_camera_render_view(raw, aspect, viewHeightPoints)
+        return RenderView(
+            projection: Self.matrix(from: v.projection),
+            cameraToWorld: Self.matrix(from: v.cameraToWorld))
     }
 
     // MARK: Scene
 
     /// Frames the camera on world-space `bbox` (see `worldBounds(of:model:)`). `adaptive` is what it
-    /// frames/moves/zooms at — without it stray splats shrink the scale to a speck; `bbox` still
-    /// bounds the far plane. `pivot` is the world point that the camera frames about and turns about,
-    /// as a `.grv` states it; with none, the centre of `adaptive`. Invalid `bbox` un-frames, and the
-    /// camera still turns about `pivot`. `reposition: false` updates only the movement scale, keeping a
-    /// `place`d pose.
+    /// frames/moves/zooms at; `bbox` bounds the far plane. `pivot` is the world point that the camera
+    /// frames about and turns about. Invalid `bbox` un-frames. `reposition: false` keeps a `place`d pose.
     public func setBBox(
         _ bbox: BoundingBox, adaptive: BoundingBox? = nil, pivot: SIMD3<Float>? = nil, reposition: Bool = true
     ) {
-        guard bbox.isValid else {
-            isFramed = false
-            // A file of sounds alone has no box, and a viewpoint can place the camera.
-            if let pivot { sceneCentre = pivot }
-            return
+        let full = Self.cBox(bbox)
+        let call = { (aPtr: UnsafePointer<GraciaBBox>?) in
+            if let pivot {
+                [pivot.x, pivot.y, pivot.z].withUnsafeBufferPointer {
+                    gracia_camera_set_bbox(self.raw, full, aPtr, $0.baseAddress, reposition)
+                }
+            } else {
+                gracia_camera_set_bbox(self.raw, full, aPtr, nil, reposition)
+            }
         }
-        let subject = adaptive.flatMap { $0.isValid ? $0 : nil } ?? bbox
-        frameScene(full: bbox, subject: subject, centre: pivot ?? subject.center, reposition: reposition)
+        if var adapt = adaptive.flatMap({ $0.isValid ? Self.cBox($0) : nil }) {
+            withUnsafePointer(to: &adapt, call)
+        } else {
+            call(nil)
+        }
     }
 
-    /// Places the camera at `eye` looking along `forward` (world-up implied, no roll). Reads nothing
-    /// from the box, so a spawn can precede its scene. Leaves `isFramed` to `setBBox`; keep this pose
-    /// past a settle with `reposition: false`.
+    /// Places the camera at `eye` looking along `forward` (world-up implied, no roll).
     public func place(eye: SIMD3<Float>, forward: SIMD3<Float>) {
-        place(eye: eye, orientation: facing(forward))
+        let e: [Float] = [eye.x, eye.y, eye.z]
+        let f: [Float] = [forward.x, forward.y, forward.z]
+        e.withUnsafeBufferPointer { ep in
+            f.withUnsafeBufferPointer { fp in
+                gracia_camera_place_forward(raw, ep.baseAddress, fp.baseAddress)
+            }
+        }
     }
-
-    /// Current world pose, for copy/paste.
-    public var eyePosition: SIMD3<Float> { eye }
-    public var orientation: simd_quatf { orient }
 
     /// Like `place(eye:forward:)` but with a full orientation, so roll survives, also through `reset()`.
     public func place(eye: SIMD3<Float>, orientation: simd_quatf) {
-        framing = (eye, orientation.normalized)
-        pose(eye: eye, orient: orientation.normalized)
+        let q = orientation.normalized.vector
+        gracia_camera_place(raw, GraciaPose(position: (eye.x, eye.y, eye.z), rotation: (q.x, q.y, q.z, q.w)))
     }
 
-    public func reset() {
-        guard let framing else { return }
-        pose(eye: framing.eye, orient: framing.orient)
-        isFramed = true
+    /// Moves the pivot with the subspace of a portal from the last rendered frame.
+    public func follow(_ move: simd_float4x4) {
+        let cols = move.columnMajor
+        cols.withUnsafeBufferPointer { gracia_camera_follow(raw, $0.baseAddress) }
     }
 
-    private func frameScene(full: BoundingBox, subject: BoundingBox, centre: SIMD3<Float>, reposition: Bool) {
-        sceneCentre = centre
-        let radius = subject.radius(about: centre)
-        sceneRadius = radius.isFinite && radius > 0 ? radius : K.defaultRadius
-        fullRadius = Swift.max(full.radius, 1e-4)
-        flyTrim = 1
-        // Drawable now.
-        isFramed = true
-
-        // A `place`d scene (spawn) keeps its pose; scale alone is enough.
-        guard reposition else { return }
-
-        // Back off along +Z until the bounding sphere fits the tighter fov half-angle.
-        let halfFovV = camera.fov * .pi / 360
-        let halfFov = Swift.min(halfFovV, atan(tan(halfFovV) * Swift.max(camera.aspect, 1e-3)))
-        let dist = radius / sin(halfFov) * 1.05
-
-        let eye = centre + Axis.z * Swift.max(dist, 1e-3)
-        framing = (eye, facing(centre - eye))
-        reset()
-    }
+    public func reset() { gracia_camera_reset(raw) }
 
     // MARK: Motion
 
     /// True when the camera moved. Inertia adds a short tail after the gesture, so an on-demand host
     /// must schedule another frame.
     @discardableResult
-    public func update(dt: Float) -> Bool {
-        var moved = move(dt: dt)
-        if let o = input.drain(dt: dt) {
-            turn(dx: o.rotX, dy: o.rotY)
-            // While flying, the wheel is the speed dial, not zoom (as in Unity/Unreal).
-            if o.zoom != 0 {
-                isFlying
-                    ? flyTrim = clamp(flyTrim * exp(o.zoom), K.flyTrim.min, K.flyTrim.max)
-                    : dolly(o.zoom)
-            }
-            if o.panX != 0 || o.panY != 0 { pan(o.panX, o.panY) }
-            moved = true
-        }
-        if moved { apply() }
-        return moved
-    }
+    public func update(dt: Float) -> Bool { gracia_camera_update(raw, dt) }
 
     /// Multiplicative: `factor > 1` moves closer.
-    public func zoom(_ factor: Float) { if factor > 0 { input.addZoom(log(factor)) } }
+    public func zoom(_ factor: Float) { if factor > 0 { gracia_camera_add_zoom(raw, log(factor)) } }
 
-    func setKeys(_ keys: Set<MoveKey>) { self.keys = keys }
-
-    // MARK: Internals
-
-    private var right: SIMD3<Float> { orient.act(Axis.x) }
-    private var up: SIMD3<Float> { orient.act(Axis.y) }
-    private var back: SIMD3<Float> { orient.act(Axis.z) }
-
-    /// Shift alone is not flying.
-    private var isFlying: Bool { !keys.subtracting([.shift]).isEmpty }
-
-    /// Distance to the scene. Every gesture is a fraction of it, so scene size stops mattering and the
-    /// camera can't be lost — drift out and each scroll grows, pulling you back.
-    private var reach: Float {
-        clamp(
-            simd_distance(eye, sceneCentre),
-            sceneRadius * K.reachFloor, sceneRadius * K.reachCeiling)
+    func setViewHeight(_ points: Float) { gracia_camera_set_view_height(raw, points) }
+    func addRotation(dx: Float, dy: Float) { gracia_camera_add_rotation(raw, dx, dy) }
+    func addPan(dx: Float, dy: Float) { gracia_camera_add_pan(raw, dx, dy) }
+    func addZoom(_ logDelta: Float) { gracia_camera_add_zoom(raw, logDelta) }
+    func addScroll(deltaY: Float, precise: Bool) { gracia_camera_add_scroll(raw, deltaY, precise) }
+    func addMagnification(_ m: Float) { if m > -1 { gracia_camera_add_zoom(raw, log1p(m)) } }
+    func setKeys(_ keys: Set<MoveKey>) {
+        gracia_camera_set_keys(raw, keys.reduce(0) { $0 | $1.bit })
     }
 
-    /// Metres per second on the keys: seeded by the scene, then trimmed by the wheel.
-    private var flySpeed: Float { sceneRadius / K.travel * flyTrim }
-
-    private func pose(eye: SIMD3<Float>, orient: simd_quatf) {
-        self.eye = eye
-        self.orient = orient
-        input.reset()
-        apply()
+    private static func cBox(_ b: BoundingBox) -> GraciaBBox {
+        guard b.isValid else { return GraciaBBox() }
+        return GraciaBBox(minmax: (b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z))
     }
 
-    /// Looks along `forward` with world-up and no roll.
-    private func facing(_ forward: SIMD3<Float>) -> simd_quatf {
-        let angles = yawPitch(of: normalized(forward, fallback: Axis.forward))
-        return simd_quatf(angle: -angles.yaw, axis: Axis.y)
-            * simd_quatf(angle: angles.pitch, axis: Axis.x)
-    }
-
-    /// A trackball: one rotation from the camera's *own* axes, turning both camera and eye-offset. No
-    /// world up, deliberately — avoids depending on the asset's export up (half are Z-up) and leaves
-    /// no pole to clamp. Turns about the scene *centre*, the pivot where the scene states one, to preserve
-    /// `|eye - centre|` exactly; a
-    /// `reach`-based pivot would walk the camera outward every frame.
-    private func turn(dx: Float, dy: Float) {
-        guard dx != 0 || dy != 0 else { return }
-        let rotation = (simd_quatf(angle: -dy, axis: right) * simd_quatf(angle: -dx, axis: up))
-            .normalized
-
-        orient = (rotation * orient).normalized
-        eye = sceneCentre + rotation.act(eye - sceneCentre)
-    }
-
-    /// Broad from afar, fine up close. Its own floor, above the orbit arc's, or it stalls mid-scene
-    /// where you were headed.
-    private func dolly(_ amount: Float) {
-        eye -= back * (amount * Swift.max(reach, sceneRadius * K.dollyFloor))
-    }
-
-    private func pan(_ px: Float, _ py: Float) {
-        let s =
-            perspectiveScale(distance: reach, fovYDegrees: camera.fov, pixels: input.height) * K.pan
-        eye += right * (-px * s) + up * (py * s)
-    }
-
-    private func move(dt: Float) -> Bool {
-        guard !keys.isEmpty else { return false }
-        let step = Swift.min(dt, K.moveDtCap) * (keys.contains(.shift) ? K.boost : 1)
-        var moved = false
-
-        // Roll turns about the camera's own Z, so the eye does not move.
-        var roll: Float = 0
-        if keys.contains(.q) { roll -= K.roll * step }
-        if keys.contains(.e) { roll += K.roll * step }
-        if roll != 0 {
-            orient = (orient * simd_quatf(angle: roll, axis: Axis.z)).normalized
-            moved = true
-        }
-
-        var v = SIMD3<Float>.zero
-        if keys.contains(.w) { v -= back }
-        if keys.contains(.s) { v += back }
-        if keys.contains(.d) { v += right }
-        if keys.contains(.a) { v -= right }
-        if keys.contains(.r) { v += up }
-        if keys.contains(.f) { v -= up }
-        if v != .zero {
-            eye += simd_normalize(v) * (step * flySpeed)
-            moved = true
-        }
-        return moved
-    }
-
-    /// No bounds on the camera, but the depth range must track the eye (not be fixed at load), or a
-    /// camera that flew off would watch the scene get clipped.
-    private func apply() {
-        camera.position = eye
-        camera.setAxes(right: right, up: up, back: back)
-
-        let near = Swift.max(0.01, reach * K.nearFraction)
-        let far = Swift.max(reach + fullRadius * 4, near * 1000)
-        if abs(camera.near - near) > near * 0.05 { camera.near = near }
-        if abs(camera.far - far) > far * 0.05 { camera.far = far }
+    private static func matrix(
+        from m: (
+            Float, Float, Float, Float, Float, Float, Float, Float,
+            Float, Float, Float, Float, Float, Float, Float, Float
+        )
+    ) -> simd_float4x4 {
+        simd_float4x4(
+            SIMD4(m.0, m.1, m.2, m.3),
+            SIMD4(m.4, m.5, m.6, m.7),
+            SIMD4(m.8, m.9, m.10, m.11),
+            SIMD4(m.12, m.13, m.14, m.15))
     }
 }
 
@@ -521,7 +291,7 @@ public final class CameraInput {
 
     public init(sceneCamera: SceneCamera) { scene = sceneCamera }
 
-    public func viewHeightChanged(_ points: Float) { scene.input.height = Swift.max(points, 1) }
+    public func viewHeightChanged(_ points: Float) { scene.setViewHeight(points) }
 
     // MARK: Pointer
 
@@ -536,9 +306,7 @@ public final class CameraInput {
         guard let last = lastPoint else { return }
         let d = point - last
         lastPoint = point
-        dragIsPan
-            ? scene.input.addPan(dx: d.x, dy: d.y)
-            : scene.input.addRotation(dx: d.x, dy: d.y)
+        dragIsPan ? scene.addPan(dx: d.x, dy: d.y) : scene.addRotation(dx: d.x, dy: d.y)
     }
 
     public func pointerUp() {
@@ -552,13 +320,12 @@ public final class CameraInput {
         deltaX: Float = 0, deltaY: Float, precise: Bool, modifiers: InputModifiers = []
     ) {
         guard precise, !modifiers.contains(.option) else {
-            return scene.input.addScroll(
-                deltaY: invertScrollZoom ? -deltaY : deltaY, precise: precise)
+            return scene.addScroll(deltaY: invertScrollZoom ? -deltaY : deltaY, precise: precise)
         }
-        scene.input.addPan(dx: deltaX * K.scrollPan, dy: deltaY * K.scrollPan)
+        scene.addPan(dx: deltaX * K.scrollPan, dy: deltaY * K.scrollPan)
     }
 
-    public func magnify(_ magnification: Float) { scene.input.addMagnification(magnification) }
+    public func magnify(_ magnification: Float) { scene.addMagnification(magnification) }
 
     // MARK: Keyboard
 

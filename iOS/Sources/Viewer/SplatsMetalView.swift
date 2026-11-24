@@ -186,15 +186,16 @@ final class SplatsMetalView: MTKView, MTKViewDelegate, UIGestureRecognizerDelega
     private func reframe() {
         guard let scene else { return }
         let full = scene.boundingBox
-        guard full.isValid else {
+        if full.isValid {
+            let subject = scene.portalBBox ?? (scene.adaptiveBBox.isValid ? scene.adaptiveBBox : full)
+            camera.setBBox(full, adaptive: subject, pivot: scene.pivot, reposition: true)
+        } else {
             // Unsettled: hand the camera the empty box so it un-frames until it settles.
             camera.setBBox(full, pivot: scene.pivot)
-            return
         }
-        let subject = scene.adaptiveBBox.isValid ? scene.adaptiveBBox : full
-        camera.setBBox(full, adaptive: subject, pivot: scene.pivot, reposition: true)
         if let start = scene.viewpoints.display {
             camera.place(eye: start.position, orientation: start.rotation)
+            camera.reset()
         }
     }
 
@@ -333,10 +334,12 @@ final class SplatsMetalView: MTKView, MTKViewDelegate, UIGestureRecognizerDelega
         guard let scene, let renderer, camera.isFramed else { return nil }
         let view3D = camera.renderView(aspect: aspect, viewHeightPoints: Float(bounds.height))
         context.setListener(cameraToWorld: view3D.cameraToWorld)
-        return renderer.render(
+        let frame = renderer.render(
             scenes: [scene], view: view3D,
             targetWidth: UInt32(size.width), targetHeight: UInt32(size.height),
             pass: pass, commandBuffer: commandBuffer)
+        if let follow = scene.portalFollow { camera.follow(follow) }
+        return frame
     }
 
     /// The SDK configures the render pass for the pipeline it picked. With no renderer yet the

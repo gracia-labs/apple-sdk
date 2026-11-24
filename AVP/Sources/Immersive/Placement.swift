@@ -34,6 +34,11 @@ enum GesturePlacement {
         return place * centerToOrigin
     }
 
+    /// Places a scene at full size so its VR viewpoint aligns with `head` (upright, matching heading).
+    static func atViewpoint(_ pose: Pose, head: simd_float4x4?) -> simd_float4x4 {
+        vrPlacement(viewpoint: pose, head: head)
+    }
+
     /// Head position in world space, from a device-to-world (`originFromAnchorTransform`) matrix.
     static func headPosition(_ deviceToWorld: simd_float4x4) -> SIMD3<Float> {
         let c = deviceToWorld.columns.3
