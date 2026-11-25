@@ -242,6 +242,9 @@ struct InputTests {
 
         #expect(close(scene.eyePosition, position, 1e-4))
         #expect(!close(back(scene), viewDirection, 1e-2))
+        let forward = scene.orientation.act(Axis.forward)
+        #expect(forward.x > 0.1)
+        #expect(forward.y > 0.05)
         #expect(abs(scene.orientation.act(Axis.x).y) < 1e-4)
     }
 
