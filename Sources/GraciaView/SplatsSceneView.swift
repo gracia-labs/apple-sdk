@@ -119,13 +119,17 @@ public final class SplatsSceneView: GraciaMetalView {
     private var inFlight = [[Frame]](repeating: [], count: GraciaMetalView.maxFramesInFlight)
     private var frameIndex = 0
 
-    public init(device: any MTLDevice, cacheDirectory: URL? = nil) throws {
+    public convenience init(device: any MTLDevice, cacheDirectory: URL? = nil) throws {
+        try self.init(device: device, cacheDirectory: cacheDirectory, audio: .device)
+    }
+
+    public init(device: any MTLDevice, cacheDirectory: URL? = nil, audio: AudioOutput) throws {
         // Context must share this view's queue: `waitUntilIdle()` drains the queue we render on.
         guard let queue = device.makeCommandQueue() else {
             throw GraciaError.contextCreationFailed
         }
         context = try GraciaContext(
-            device: device, commandQueue: queue, cacheDirectory: cacheDirectory)
+            device: device, commandQueue: queue, cacheDirectory: cacheDirectory, audio: audio)
         camera = SceneCamera()
         input = CameraInput(sceneCamera: camera)
         super.init(device: device, commandQueue: queue)
