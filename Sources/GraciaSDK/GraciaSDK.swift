@@ -977,7 +977,8 @@ public final class SceneGroup {
     }
 
     /// The pivot of the first scene that states one.
-    public var pivot: SIMD3<Float>? { scenes.lazy.compactMap(\.pivot).first }
+    /// Authored pivot of a single `.grv` scene, or `nil` when multiple scenes make pivot ambiguous.
+    public var pivot: SIMD3<Float>? { scenes.count == 1 ? scenes[0].pivot : nil }
 
     /// Bounds of the portal window when this group holds one scene with a portal.
     public var portalBBox: BoundingBox? { scenes.count == 1 ? scenes[0].portalBBox : nil }

@@ -54,6 +54,7 @@ public func worldPose(of pose: Pose, model: simd_float4x4) -> Pose {
 public enum KeyCode {
     public static let a: UInt16 = 0
     public static let b: UInt16 = 11
+    public static let c: UInt16 = 8
     public static let s: UInt16 = 1
     public static let d: UInt16 = 2
     public static let f: UInt16 = 3
@@ -123,7 +124,7 @@ public final class SceneCamera {
 
     public init() {
         // Metal clip space: +Y up (`flipY: false`), reverse-Z by default.
-        var cfg = GraciaCameraConfig(fov: 60, aspect: 1, viewHeight: 1, reverseZ: true, flipY: false)
+        var cfg = GraciaCameraConfig(fov: 60, aspect: 1, viewHeight: 1, reverseZ: true, flipY: false, freeLook: false)
         raw = gracia_camera_create(&cfg)!
     }
 
@@ -153,6 +154,11 @@ public final class SceneCamera {
         set { updateConfig { $0.aspect = newValue } }
     }
 
+    public var freeLook: Bool {
+        get { gracia_camera_config(raw).freeLook }
+        set { updateConfig { $0.freeLook = newValue } }
+    }
+
     /// True once a scene has been framed; before that there is nothing to show.
     public var isFramed: Bool { gracia_camera_view(raw, 0, 0).framed }
 
@@ -180,7 +186,8 @@ public final class SceneCamera {
 
     /// Frames the camera on world-space `bbox` (see `worldBounds(of:model:)`). `adaptive` is what it
     /// frames/moves/zooms at; `bbox` bounds the far plane. `pivot` is the world point that the camera
-    /// frames about and turns about. Invalid `bbox` un-frames. `reposition: false` keeps a `place`d pose.
+    /// frames about and orbits about (defaults to the subject centre). Invalid `bbox` un-frames.
+    /// `reposition: false` keeps a `place`d pose.
     public func setBBox(
         _ bbox: BoundingBox, adaptive: BoundingBox? = nil, pivot: SIMD3<Float>? = nil, reposition: Bool = true
     ) {
@@ -228,28 +235,17 @@ public final class SceneCamera {
     /// Multiplicative: `factor > 1` moves closer.
     public func zoom(_ factor: Float) { if factor > 0 { addZoom(log(factor)) } }
 
+    private func input(_ fill: (inout GraciaCameraDelta) -> Void) {
+        var d = GraciaCameraDelta()
+        fill(&d)
+        gracia_camera_input(raw, d)
+    }
+
     func setViewHeight(_ points: Float) { updateConfig { $0.viewHeight = points } }
-    func addRotation(dx: Float, dy: Float) {
-        var d = GraciaCameraDelta()
-        d.rotate = (dx, dy)
-        gracia_camera_input(raw, d)
-    }
-    func addPan(dx: Float, dy: Float) {
-        var d = GraciaCameraDelta()
-        d.pan = (dx, dy)
-        gracia_camera_input(raw, d)
-    }
-    func addZoom(_ logDelta: Float) {
-        var d = GraciaCameraDelta()
-        d.zoom = logDelta
-        gracia_camera_input(raw, d)
-    }
-    func addScroll(deltaY: Float, precise: Bool) {
-        var d = GraciaCameraDelta()
-        d.scroll = deltaY
-        d.scrollPrecise = precise
-        gracia_camera_input(raw, d)
-    }
+    func addRotation(dx: Float, dy: Float) { input { $0.rotate = (dx, dy) } }
+    func addPan(dx: Float, dy: Float) { input { $0.pan = (dx, dy) } }
+    func addZoom(_ logDelta: Float) { input { $0.zoom = logDelta } }
+    func addScroll(deltaY: Float, precise: Bool) { input { $0.scroll = deltaY; $0.scrollPrecise = precise } }
     func addMagnification(_ m: Float) { if m > -1 { addZoom(log1p(m)) } }
     func setKeys(_ keys: Set<MoveKey>) {
         gracia_camera_set_keys(raw, keys.reduce(0) { $0 | $1.bit })

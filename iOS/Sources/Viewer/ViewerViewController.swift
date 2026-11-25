@@ -21,6 +21,7 @@ final class ViewerViewController: UIViewController {
     private let timeSlider = UISlider()
     private let clock = UILabel()
     private var arButton: UIBarButtonItem!
+    private var cameraControl: UISegmentedControl!
     private var isScrubbing = false
 
     override func viewDidLoad() {
@@ -82,6 +83,19 @@ final class ViewerViewController: UIViewController {
             title: "AR", style: .plain, target: self, action: #selector(arTapped))
         arButton.isEnabled = false
         navigationItem.rightBarButtonItem = arButton
+
+        let symConfig = UIImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+        if let orbitImg = UIImage(systemName: "rotate.3d", withConfiguration: symConfig),
+           let lookImg = UIImage(systemName: "eye", withConfiguration: symConfig) {
+            orbitImg.accessibilityLabel = "Orbit"
+            lookImg.accessibilityLabel = "Look"
+            cameraControl = UISegmentedControl(items: [orbitImg, lookImg])
+        } else {
+            cameraControl = UISegmentedControl(items: ["Orbit", "Look"])
+        }
+        cameraControl.selectedSegmentIndex = 0
+        cameraControl.addTarget(self, action: #selector(cameraModeChanged(_:)), for: .valueChanged)
+        navigationItem.titleView = cameraControl
 
         hud.translatesAutoresizingMaskIntoConstraints = false
         hud.numberOfLines = 0
@@ -181,6 +195,11 @@ final class ViewerViewController: UIViewController {
 
     @objc private func togglePlayback() {
         metalView.isPlaying.toggle()
+    }
+
+    @objc private func cameraModeChanged(_ sender: UISegmentedControl) {
+        metalView.camera.freeLook = sender.selectedSegmentIndex == 1
+        metalView.requestFrame()
     }
 
     @objc private func scrubBegan() { isScrubbing = true }

@@ -12,6 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow!
     private var view: SplatsSceneView!
     private var hud: NSTextField!
+    private var cameraModeControl: NSSegmentedControl!
+    private var orbitMenuItem: NSMenuItem!
+    private var lookMenuItem: NSMenuItem!
     private var transport: NSStackView!
     private var timeSlider: NSSlider!
     private var playPause: NSButton!
@@ -202,11 +205,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch code {
         case KeyCode.space: view.isPlaying.toggle()
         case KeyCode.zero: view.camera.reset()
+        case KeyCode.c: setFreeLook(!view.camera.freeLook)
         case KeyCode.m: try? view.toggleLayout()
         default: return false
         }
         return true
     }
+
+    private func setFreeLook(_ freeLook: Bool) {
+        view.camera.freeLook = freeLook
+        syncCameraModeUI()
+        view.requestFrame()
+    }
+
+    private func syncCameraModeUI() {
+        let look = view.camera.freeLook
+        cameraModeControl?.selectedSegment = look ? 1 : 0
+        orbitMenuItem?.state = look ? .off : .on
+        lookMenuItem?.state = look ? .on : .off
+    }
+
+    @objc private func cameraModeChanged(_ sender: NSSegmentedControl) {
+        setFreeLook(sender.selectedSegment == 1)
+    }
+
+    @objc private func selectOrbitCamera(_ sender: Any?) { setFreeLook(false) }
+    @objc private func selectLookCamera(_ sender: Any?) { setFreeLook(true) }
 
     // MARK: - Chrome
 
@@ -242,11 +266,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hud.topAnchor.constraint(equalTo: content.topAnchor, constant: 10),
         ])
 
+        buildCameraModeControl(in: content)
         buildTransport(in: content)
         buildAppearancePanel(in: content)
 
         window.contentView = content
         window.makeKeyAndOrderFront(nil)
+    }
+
+    private func buildCameraModeControl(in content: NSView) {
+        let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+        let control = NSSegmentedControl(
+            labels: ["Orbit", "Look"],
+            trackingMode: .selectOne,
+            target: self,
+            action: #selector(cameraModeChanged(_:)))
+        control.segmentStyle = .rounded
+        control.refusesFirstResponder = true
+        control.setImage(
+            NSImage(systemSymbolName: "rotate.3d", accessibilityDescription: "Orbit")?
+                .withSymbolConfiguration(config),
+            forSegment: 0)
+        control.setImage(
+            NSImage(systemSymbolName: "eye", accessibilityDescription: "Look")?
+                .withSymbolConfiguration(config),
+            forSegment: 1)
+        control.setImageScaling(.scaleProportionallyDown, forSegment: 0)
+        control.setImageScaling(.scaleProportionallyDown, forSegment: 1)
+        control.setToolTip("Orbit around pivot (C)", forSegment: 0)
+        control.setToolTip("Free-look from eye (C)", forSegment: 1)
+        control.translatesAutoresizingMaskIntoConstraints = false
+        cameraModeControl = control
+
+        let pill = NSVisualEffectView()
+        pill.material = .hudWindow
+        pill.blendingMode = .withinWindow
+        pill.state = .active
+        pill.wantsLayer = true
+        pill.layer?.cornerRadius = 9
+        pill.layer?.masksToBounds = true
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        pill.addSubview(control)
+        content.addSubview(pill)
+
+        NSLayoutConstraint.activate([
+            pill.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            pill.topAnchor.constraint(equalTo: content.topAnchor, constant: 10),
+            control.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 6),
+            control.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -6),
+            control.topAnchor.constraint(equalTo: pill.topAnchor, constant: 4),
+            control.bottomAnchor.constraint(equalTo: pill.bottomAnchor, constant: -4),
+        ])
+        syncCameraModeUI()
     }
 
     /// Hidden for a static scene.
@@ -553,6 +624,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         fileItem.submenu = fileMenu
         mainMenu.addItem(fileItem)
+
+        let viewItem = NSMenuItem()
+        let viewMenu = NSMenu(title: "View")
+        orbitMenuItem = NSMenuItem(
+            title: "Orbit Camera", action: #selector(selectOrbitCamera(_:)), keyEquivalent: "")
+        orbitMenuItem.target = self
+        orbitMenuItem.image = NSImage(systemSymbolName: "rotate.3d", accessibilityDescription: nil)
+        viewMenu.addItem(orbitMenuItem)
+
+        lookMenuItem = NSMenuItem(
+            title: "Look Camera", action: #selector(selectLookCamera(_:)), keyEquivalent: "")
+        lookMenuItem.target = self
+        lookMenuItem.image = NSImage(systemSymbolName: "eye", accessibilityDescription: nil)
+        viewMenu.addItem(lookMenuItem)
+
+        viewItem.submenu = viewMenu
+        mainMenu.addItem(viewItem)
+        syncCameraModeUI()
 
         NSApp.mainMenu = mainMenu
     }

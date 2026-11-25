@@ -215,7 +215,8 @@ struct InputTests {
 
     @Test func primaryDragOrbits() {
         let (scene, input) = framedOrbit()
-        let radius = simd_length(scene.eyePosition)
+        let startEye = scene.eyePosition
+        let radius = simd_length(startEye)
         let viewDirection = back(scene)
 
         input.pointerDown(at: SIMD2(400, 400))
@@ -224,7 +225,24 @@ struct InputTests {
         settle(scene)
 
         #expect(!close(back(scene), viewDirection, 1e-2))
+        #expect(!close(scene.eyePosition, startEye, 1e-2))
         #expect(abs(simd_length(scene.eyePosition) - radius) < 1e-2)
+    }
+
+    @Test func freeLookDragTurnsInPlace() {
+        let (scene, input) = framedOrbit()
+        scene.freeLook = true
+        let position = scene.eyePosition
+        let viewDirection = back(scene)
+
+        input.pointerDown(at: SIMD2(400, 400))
+        input.pointerDragged(to: SIMD2(500, 350))
+        input.pointerUp()
+        settle(scene)
+
+        #expect(close(scene.eyePosition, position, 1e-4))
+        #expect(!close(back(scene), viewDirection, 1e-2))
+        #expect(abs(scene.orientation.act(Axis.x).y) < 1e-4)
     }
 
     @Test func secondaryDragPans() {
