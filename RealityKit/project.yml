@@ -1,0 +1,52 @@
+# XcodeGen spec for the Gracia RealityKit macOS demo.
+#
+#   brew install xcodegen      # once
+#   cd RealityKit
+#   xcodegen generate          # writes GraciaRealityKitDemo.xcodeproj
+#   open GraciaRealityKitDemo.xcodeproj
+name: GraciaRealityKitDemo
+
+options:
+  bundleIdPrefix: com.gracia
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  minimumXcodeGenVersion: "2.44.0"
+
+packages:
+  gracia-sdk:
+    path: ..
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  GraciaRealityKitDemo:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources
+    dependencies:
+      - package: gracia-sdk
+        product: GraciaRealityKit
+      - package: gracia-sdk
+        product: GraciaSDK
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gracia.realitykitdemo
+        GENERATE_INFOPLIST_FILE: "NO"
+        INFOPLIST_FILE: Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ENABLE_APP_SANDBOX: "NO"
+
+schemes:
+  GraciaRealityKitDemo:
+    build:
+      targets:
+        GraciaRealityKitDemo: all
+    run:
+      config: Debug

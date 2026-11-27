@@ -14,6 +14,7 @@ import simd
 public enum GraciaError: Error, CustomStringConvertible {
     case contextCreationFailed
     case rendererCreationFailed
+    case depthResolverCreationFailed
     case loadFailed(URL)
     case unsupportedFile(URL)
 
@@ -22,6 +23,7 @@ public enum GraciaError: Error, CustomStringConvertible {
         case .contextCreationFailed:
             "failed to create the Gracia context (no Metal device, or a GPU debugger is attached)"
         case .rendererCreationFailed: "failed to create the splats renderer"
+        case .depthResolverCreationFailed: "failed to create the depth resolver"
         case .loadFailed(let url): "failed to load \(url.lastPathComponent)"
         case .unsupportedFile(let url): "unsupported file type: \(url.lastPathComponent)"
         }
@@ -171,6 +173,15 @@ public enum GraciaMatrix {
         let z = normalized(eye - target, fallback: SIMD3(0, 0, 1))
         let x = normalized(simd_cross(up, z), fallback: SIMD3(1, 0, 0))
         return cameraWorld(eye: eye, right: x, up: simd_cross(z, x), back: z)
+    }
+
+    /// True when a right-handed Metal `[0, 1]` projection maps near to 1 and far to 0 (reverse-Z),
+    /// covering finite perspective, infinite perspective (RealityKit / Compositor Services), and orthographic matrices.
+    public static func isReverseZ(_ projection: simd_float4x4) -> Bool {
+        if abs(projection.columns.2.w) > 1e-6 {
+            return projection.columns.3.z > 0
+        }
+        return projection.columns.2.z > 0
     }
 }
 
@@ -625,17 +636,22 @@ public final class Scene {
 
     /// Loads any supported scene, format from the extension; anything else is tried as MINT. `head` is
     /// the head of a `.grv` that holds a head hash; with none, a `.grv` takes the file beside it with
-    /// `.head` after its name, where there is one.
-    public convenience init(url: URL, context: GraciaContext, head: Data? = nil) throws {
+    /// `.head` after its name, where there is one. Set `needMesh` to true to also decode the proxy mesh
+    /// stream of a video asset.
+    public convenience init(
+        url: URL, context: GraciaContext, head: Data? = nil, needMesh: Bool = false
+    ) throws {
         let kind = Kind(rawValue: url.pathExtension.lowercased())
-        try self.init(url: url, kind: kind ?? .mint, context: context, head: head)
+        try self.init(url: url, kind: kind ?? .mint, context: context, head: head, needMesh: needMesh)
     }
 
     /// Loads a scene whose format the caller knows — content stored under its id has no extension.
-    /// `head` is as for `init(url:context:head:)`.
-    public convenience init(url: URL, kind: Kind, context: GraciaContext, head: Data? = nil) throws {
+    /// `head` and `needMesh` are as for `init(url:context:head:needMesh:)`.
+    public convenience init(
+        url: URL, kind: Kind, context: GraciaContext, head: Data? = nil, needMesh: Bool = false
+    ) throws {
         if kind.isVideo {
-            try self.init(videoURL: url, kind: kind, context: context, head: head)
+            try self.init(videoURL: url, kind: kind, context: context, head: head, needMesh: needMesh)
         } else {
             try self.init(staticURL: url, kind: kind, context: context)
         }
@@ -661,7 +677,9 @@ public final class Scene {
             splatsBudget: count, duration: 0)
     }
 
-    private convenience init(videoURL url: URL, kind: Kind, context: GraciaContext, head: Data?) throws {
+    private convenience init(
+        videoURL url: URL, kind: Kind, context: GraciaContext, head: Data?, needMesh: Bool
+    ) throws {
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw GraciaError.loadFailed(url)
         }
@@ -674,7 +692,7 @@ public final class Scene {
         let head = head ?? (kind == .grv ? try? Data(contentsOf: URL(fileURLWithPath: url.path + ".head")) : nil)
         guard
             let handle = url.path.withCString({ path in
-                Scene.withHead(head) { gracia_video_stream_create(context.raw, nil, path, false, $0, $1) }
+                Scene.withHead(head) { gracia_video_stream_create(context.raw, nil, path, needMesh, $0, $1) }
             })
         else { throw GraciaError.loadFailed(url) }
 
@@ -1070,7 +1088,7 @@ extension BoundingBox {
 /// `render` hands back a heap handle per pass and view; every non-null one must be destroyed even if
 /// never executed, or it leaks.
 public final class DrawCalls {
-    private let raw: OpaquePointer
+    fileprivate let raw: OpaquePointer
 
     fileprivate init(raw: OpaquePointer) { self.raw = raw }
 
@@ -1282,6 +1300,105 @@ public final class SplatsRenderer {
         var depth: Float = 0
         let index = gracia_splats_renderer_read_pick_result(raw, &depth)
         return index < 0 ? nil : (Int(index), depth)
+    }
+}
+
+// MARK: - Depth resolver
+
+/// Draw calls produced by ``DepthResolver/render(depthPass:width:height:projections:colorFormat:depthFormat:linearizeColor:commandBuffer:)``.
+/// Hold until the command buffer completes, as with ``Frame``.
+public final class DepthResolveFrame: @unchecked Sendable {
+    /// Writes `project(R/G)` into a colour attachment (empty when `colorFormat` was `nil`).
+    public let color: PassDrawCalls
+    /// Writes `project(R/G)` as device depth into a depth attachment (empty when `depthFormat` was `.undefined`).
+    public let depth: PassDrawCalls
+
+    fileprivate init(_ raw: GraciaDepthResolveDrawCalls) {
+        color = PassDrawCalls(raw.color)
+        depth = PassDrawCalls(raw.depth)
+    }
+
+    fileprivate static let empty = DepthResolveFrame(GraciaDepthResolveDrawCalls())
+}
+
+/// Optional resolver that converts the SDK's auxiliary `RG32F` splat depth pass (`Frame.depth`) into
+/// projected device depth or linearized colour depth.
+///
+/// Most callers do not need this: configuring ``SplatsPassDescriptor/depth`` with
+/// ``DepthDescription/splats(format:reverseZ:)`` writes device depth directly during the main splats
+/// tile pass with no extra intermediate target. Use ``DepthResolver`` only when you need resolved
+/// weighted-average (`sum(a*viewZ) / sum(a)`) or linearized depth output.
+public final class DepthResolver {
+    private let raw: OpaquePointer
+    private let context: GraciaContext
+
+    public init(context: GraciaContext) throws {
+        guard let created = gracia_depth_resolver_create(context.raw) else {
+            throw GraciaError.depthResolverCreationFailed
+        }
+        self.raw = created
+        self.context = context
+    }
+
+    deinit { gracia_depth_resolver_destroy(raw) }
+
+    /// Mono or single-eye multipass convenience overload.
+    public func render(
+        depthDrawCall: DrawCalls?, width: UInt32, height: UInt32,
+        projection: simd_float4x4, colorFormat: ColorFormat? = nil,
+        depthFormat: DepthFormat = .d32Float, linearizeColor: Bool = false,
+        commandBuffer: any MTLCommandBuffer
+    ) -> DepthResolveFrame {
+        render(
+            depthDrawCalls: [depthDrawCall], stereo: .multipass, width: width, height: height,
+            projections: [projection], colorFormat: colorFormat, depthFormat: depthFormat,
+            linearizeColor: linearizeColor, commandBuffer: commandBuffer)
+    }
+
+    /// Resolves all views of a `Frame.depth` pass (1 view for mono or multipass single eye, 2 views for
+    /// multiview or multilayer). Must be called with no render encoder open on `commandBuffer`.
+    public func render(
+        depthPass: PassDrawCalls, width: UInt32, height: UInt32,
+        projections: [simd_float4x4], colorFormat: ColorFormat? = nil,
+        depthFormat: DepthFormat = .d32Float, linearizeColor: Bool = false,
+        commandBuffer: any MTLCommandBuffer
+    ) -> DepthResolveFrame {
+        render(
+            depthDrawCalls: depthPass.views, stereo: depthPass.stereo, width: width, height: height,
+            projections: projections, colorFormat: colorFormat, depthFormat: depthFormat,
+            linearizeColor: linearizeColor, commandBuffer: commandBuffer)
+    }
+
+    private func render(
+        depthDrawCalls: [DrawCalls?], stereo: StereoMode, width: UInt32, height: UInt32,
+        projections: [simd_float4x4], colorFormat: ColorFormat?, depthFormat: DepthFormat,
+        linearizeColor: Bool, commandBuffer: any MTLCommandBuffer
+    ) -> DepthResolveFrame {
+        guard !depthDrawCalls.isEmpty, let firstProj = projections.first else { return .empty }
+        let viewCount = min(depthDrawCalls.count, min(projections.count, 2))
+        let rawCalls: [OpaquePointer?] = (0..<viewCount).map { depthDrawCalls[$0]?.raw }
+        let proj0 = firstProj.columnMajor
+        let proj1 = (viewCount > 1 ? projections[1] : firstProj).columnMajor
+
+        var cb = GraciaCommandBuffer()
+        cb.handle = Unmanaged.passUnretained(commandBuffer)
+        let rawColor = colorFormat?.raw ?? GRACIA_COLOR_FORMAT_UNDEFINED
+
+        let resolved = proj0.withUnsafeBufferPointer { p0 in
+            proj1.withUnsafeBufferPointer { p1 in
+                let projPtrs: [UnsafePointer<Float>?] =
+                    viewCount > 1 ? [p0.baseAddress, p1.baseAddress] : [p0.baseAddress]
+                return projPtrs.withUnsafeBufferPointer { pp in
+                    rawCalls.withUnsafeBufferPointer { calls in
+                        gracia_depth_resolver_render(
+                            self.raw, calls.baseAddress, UInt32(viewCount), stereo.raw,
+                            width, height, pp.baseAddress, rawColor, depthFormat.raw,
+                            linearizeColor, cb)
+                    }
+                }
+            }
+        }
+        return DepthResolveFrame(resolved)
     }
 }
 

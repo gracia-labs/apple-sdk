@@ -4,12 +4,13 @@ import PackageDescription
 
 /// Gracia's Gaussian-splat SDK for Apple platforms.
 ///
-/// Three libraries stacked on the C SDK, plus a viewer app that demonstrates them:
+/// Four libraries stacked on the C SDK, plus a viewer app that demonstrates them:
 ///
-///   GraciaSDK     C bindings, Metal wiring, scene loading      Metal · simd · Foundation
-///   GraciaCamera  camera + input (orbit, fly, zoom)            simd
-///   GraciaView    macOS MTKView that plays scenes              AppKit · MetalKit
-///   mac-viewer    the demo app: window, menu, HUD, CLI
+///   GraciaSDK         C bindings, Metal wiring, scene loading      Metal · simd · Foundation
+///   GraciaCamera      camera + input (orbit, fly, zoom)            simd
+///   GraciaRealityKit  RealityKit bridge & depth compositor         RealityKit · Metal · simd
+///   GraciaView        macOS MTKView that plays scenes              AppKit · MetalKit
+///   mac-viewer        the demo app: window, menu, HUD, CLI
 ///
 /// `GraciaSDK` and `GraciaCamera` deliberately depend on no UI framework, so they work on the
 /// xcframework's `ios-arm64` and `xros-arm64` slices too. AppKit and MetalKit stop at `GraciaView`.
@@ -21,6 +22,7 @@ let package = Package(
     products: [
         .library(name: "GraciaSDK", targets: ["GraciaSDK"]),
         .library(name: "GraciaCamera", targets: ["GraciaCamera"]),
+        .library(name: "GraciaRealityKit", targets: ["GraciaRealityKit"]),
         .library(name: "GraciaView", targets: ["GraciaView"]),
         .executable(name: "mac-viewer", targets: ["MacViewer"]),
     ],
@@ -34,6 +36,9 @@ let package = Package(
         // Camera and input: orbit (drag), fly (WASD), zoom (scroll).
         .target(name: "GraciaCamera", dependencies: ["GraciaSDK", "gracia_sdk"]),
 
+        // RealityKit integration: direct splat-pass depth compositing, ARView/RealityView/RealityRenderer bridges.
+        .target(name: "GraciaRealityKit", dependencies: ["GraciaSDK"]),
+
         // The macOS view layer.
         .target(name: "GraciaView", dependencies: ["GraciaSDK", "GraciaCamera"]),
 
@@ -42,6 +47,7 @@ let package = Package(
 
         .testTarget(name: "GraciaSDKTests", dependencies: ["GraciaSDK"]),
         .testTarget(name: "GraciaCameraTests", dependencies: ["GraciaCamera", "GraciaSDK"]),
+        .testTarget(name: "GraciaRealityKitTests", dependencies: ["GraciaRealityKit", "GraciaSDK"]),
         .testTarget(name: "GraciaViewTests", dependencies: ["GraciaView"]),
     ],
     swiftLanguageModes: [.v6]

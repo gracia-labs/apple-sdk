@@ -16,6 +16,7 @@ The camera (drag to orbit, WASD to fly, scroll to zoom), video playback, and dra
 | --- | --- | --- |
 | `GraciaSDK` | macOS · iOS · visionOS | Scene loading + the Metal renderer. Foundation, Metal, simd. |
 | `GraciaCamera` | macOS · iOS · visionOS | Camera + input (orbit / fly / zoom). simd only. |
+| `GraciaRealityKit` | macOS · iOS · visionOS | RealityKit bridge with direct splat-pass depth and compute composite. See [`RealityKit/README.md`](RealityKit/README.md). |
 | `GraciaView` | macOS | Drop-in `MTKView` that plays scenes. AppKit + MetalKit. |
 | `mac-viewer` | macOS | A demo app: `swift run mac-viewer scene.mint` |
 
@@ -136,8 +137,9 @@ gain of each sound of a scene. To mix the sounds into an audio engine of your ow
 `audio: .host(sampleRate:channels:)` and call `readAudio(into:frameCount:)` on your audio thread. The MP3
 of a `.mint` is not played: read it from `audioData`.
 
-For full worked examples, see the [iOS demo](iOS/README.md) (2D viewer and AR) and the
-[visionOS demo](AVP/README.md) (immersive stereo).
+For full worked examples, see the [iOS demo](iOS/README.md) (2D viewer and AR), the
+[visionOS demo](AVP/README.md) (immersive stereo), and the [RealityKit demo](RealityKit/README.md)
+(macOS).
 
 ## Controls
 

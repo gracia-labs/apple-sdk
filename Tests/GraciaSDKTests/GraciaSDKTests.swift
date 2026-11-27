@@ -86,6 +86,33 @@ struct ProjectionTests {
         #expect(close(normalized(SIMD3(0, 3, 0), fallback: SIMD3(1, 0, 0)), SIMD3(0, 1, 0)))
         #expect(close(withLength(.zero, 5, fallback: SIMD3(1, 0, 0)), SIMD3(5, 0, 0)))
     }
+
+    /// `isReverseZ` detects finite, infinite (RealityKit / Compositor Services), and orthographic projections.
+    @Test func reverseZDetectionCoversFiniteInfiniteAndOrtho() {
+        let finiteReverse = GraciaMatrix.perspective(
+            fovYDegrees: 60, aspect: 1.5, near: 0.1, far: 100, reverseZ: true)
+        let finiteForward = GraciaMatrix.perspective(
+            fovYDegrees: 60, aspect: 1.5, near: 0.1, far: 100, reverseZ: false)
+        #expect(GraciaMatrix.isReverseZ(finiteReverse))
+        #expect(!GraciaMatrix.isReverseZ(finiteForward))
+
+        // Infinite reverse-Z perspective (RealityKit / Compositor Services): c2.z = 0, c3.z = +near.
+        let infiniteReverse = simd_float4x4(
+            SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, 0, -1), SIMD4(0, 0, 0.05, 0))
+        // Infinite forward-Z perspective: c2.z = -1, c3.z = -near.
+        let infiniteForward = simd_float4x4(
+            SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, -1, -1), SIMD4(0, 0, -0.05, 0))
+        #expect(GraciaMatrix.isReverseZ(infiniteReverse))
+        #expect(!GraciaMatrix.isReverseZ(infiniteForward))
+
+        // Orthographic projections (c2.w = 0): sign of c2.z flips between reverse-Z and forward-Z.
+        let orthoReverse = simd_float4x4(
+            SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, 0.01, 0), SIMD4(0, 0, 1, 1))
+        let orthoForward = simd_float4x4(
+            SIMD4(1, 0, 0, 0), SIMD4(0, 1, 0, 0), SIMD4(0, 0, -0.01, 0), SIMD4(0, 0, 0, 1))
+        #expect(GraciaMatrix.isReverseZ(orthoReverse))
+        #expect(!GraciaMatrix.isReverseZ(orthoForward))
+    }
 }
 
 // MARK: - Pass descriptors
@@ -217,6 +244,20 @@ struct LiveSDKTests {
     /// The GPU goes idle without a scene, a renderer, or anything submitted.
     @Test func waitUntilIdleOnAnEmptyQueueReturns() throws {
         guard let context = try makeContext() else { return }
+        context.waitUntilIdle()
+    }
+
+    /// The optional depth resolver creates and destroys cleanly on a live Metal context.
+    @Test func depthResolverCreatesAndDestroys() throws {
+        guard let context = try makeContext() else { return }
+        let resolver = try DepthResolver(context: context)
+        let proj = GraciaMatrix.perspective(fovYDegrees: 60, aspect: 1, near: 0.1, far: 100)
+        if let cb = context.commandQueue.makeCommandBuffer() {
+            let empty = resolver.render(
+                depthDrawCall: nil, width: 64, height: 64, projection: proj, commandBuffer: cb)
+            #expect(empty.color.mono == nil)
+            #expect(empty.depth.mono == nil)
+        }
         context.waitUntilIdle()
     }
 }
